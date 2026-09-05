@@ -90,7 +90,7 @@ C# 通过 P/Invoke 调用 `GameFrameworkMediaCapture.dll` 导出的 C 接口。�
 
 ```text
 Game View 最终画面
-  → 同尺寸：直接采集到 BGRA RenderTexture
+  → 同尺寸：Graphics.Blit(null, BGRA RenderTexture)
     需缩放：采集到 RGBA RenderTexture → Blit 到 BGRA RenderTexture
   → 原生 D3D11 纹理池 / GPU 完成查询
   → FFmpeg D3D11 硬件帧 → NVIDIA NVENC → video.mp4
@@ -118,7 +118,7 @@ Unity 主线程：RenderTexture.GetNativeTexturePtr()
   → P/Invoke：mc_create(texturePointer, options)
   → Session：取得 Unity D3D11 设备，创建纹理池及 FFmpeg 硬件上下文
 
-Unity 帧末：同尺寸直接 CaptureScreenshotIntoRenderTexture(BGRA)
+Unity 帧末：同尺寸直接 Graphics.Blit(null, BGRA)
            需缩放时 CaptureScreenshotIntoRenderTexture(RGBA) → Graphics.Blit(BGRA)
   → mc_queue_frame(handle, texturePointer, audioSample) → 请求 ID
   → CommandBuffer.IssuePluginEventAndData → Graphics.ExecuteCommandBuffer
@@ -160,10 +160,10 @@ FFmpeg 因而使用 Unity 纹理所属的同一 D3D11 设备。这里的 `D3D11V
 
 `CaptureNativeFrames()` 仍在 `WaitForEndOfFrame` 后采集，使用公开的引擎 API，不要求接入项目定制渲染管线。`NativeD3D11Capture.Capture()` 比较实际帧尺寸和固定输出尺寸：
 
-- 尺寸相同：直接调用 `ScreenCapture.CaptureScreenshotIntoRenderTexture(m_OutputTexture)` 写入 BGRA 输出纹理，不分配 RGBA 中间纹理，也不再执行一次独立的 `Graphics.Blit()`。
+- 尺寸相同：直接调用 `Graphics.Blit(null, m_OutputTexture)`，从当前帧缓冲写入 BGRA 输出纹理。不调用 `CaptureScreenshotIntoRenderTexture()`，也不分配 RGBA 中间纹理。
 - 尺寸不同：按实际画面尺寸分配 RGBA 纹理，采集完整 Game View，再用 `Graphics.Blit()` 缩放至 BGRA 输出纹理。奇数画面尺寸向下取偶数的情况也使用该路径，避免裁剪边缘。
 
-当前 Unity D3D11 实现通过 `GrabPixels()` 取得帧缓冲，兼容格式使用 GPU 复制，不兼容格式使用内部绘制完成转换。因此，直接采集到 BGRA 仍可能执行引擎内部的 Blit，省去的是 RGBA 中间纹理及其额外传输。写入 BGRA 期间关闭额外的 sRGB 写入转换，完成后恢复原有状态。不同尺寸保留缩放路径，是因为帧缓冲采集中的矩形限制不能等同于完整画面缩放。
+当前 Unity D3D11 实现对空源纹理的 `Graphics.Blit()` 通过 `GrabPixels()` 取得帧缓冲；兼容格式使用 GPU 复制，不兼容格式使用内部绘制完成转换。这里由内部绘制直接完成帧缓冲到 BGRA 的转换，省去 RGBA 中间纹理及其额外传输。写入 BGRA 期间关闭额外的 sRGB 写入转换，完成后恢复原有状态。不同尺寸保留截图加缩放路径，是因为帧缓冲采集中的矩形限制不能等同于完整画面缩放。
 
 `mc_queue_frame(handle, texturePointer, audioSample)` 保存会话引用、纹理的 `ComPtr` 引用和采集时间，返回请求 ID；该函数本身不执行纹理复制。C# 将请求 ID 传入 `CommandBuffer.IssuePluginEventAndData()`，再通过 `Graphics.ExecuteCommandBuffer()` 提交。事件 ID `0` 对应帧提交，回调地址由 `mc_get_render_callback()` 提供。
 

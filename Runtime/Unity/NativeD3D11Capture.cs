@@ -156,8 +156,8 @@ namespace GameFramework.MediaCapture.Unity
                 }
                 else
                 {
-                    // 同尺寸直接写入 BGRA，由引擎处理帧缓冲格式转换，无需 RGBA 中间纹理。
-                    ScreenCapture.CaptureScreenshotIntoRenderTexture(m_OutputTexture);
+                    // 同尺寸直接把帧缓冲 Blit 到 BGRA，无需截图 API 和 RGBA 中间纹理。
+                    Graphics.Blit(null, m_OutputTexture);
                 }
             }
             finally

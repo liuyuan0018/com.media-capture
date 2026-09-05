@@ -90,7 +90,7 @@ C# uses P/Invoke to call the C interface exported by `GameFrameworkMediaCapture.
 
 ```text
 Final Game View image
-  → Matching dimensions: capture directly into BGRA RenderTexture
+  → Matching dimensions: Graphics.Blit(null, BGRA RenderTexture)
     Scaling required: capture into RGBA RenderTexture → Blit into BGRA RenderTexture
   → native D3D11 texture pool / GPU completion queries
   → FFmpeg D3D11 hardware frames → NVIDIA NVENC → video.mp4
@@ -118,7 +118,7 @@ Unity main thread: RenderTexture.GetNativeTexturePtr()
   → P/Invoke: mc_create(texturePointer, options)
   → Session: obtain Unity D3D11 device, create texture pool and FFmpeg hardware contexts
 
-Unity frame end: matching dimensions → CaptureScreenshotIntoRenderTexture(BGRA)
+Unity frame end: matching dimensions → Graphics.Blit(null, BGRA)
                 scaling required → CaptureScreenshotIntoRenderTexture(RGBA) → Graphics.Blit(BGRA)
   → mc_queue_frame(handle, texturePointer, audioSample) → request ID
   → CommandBuffer.IssuePluginEventAndData → Graphics.ExecuteCommandBuffer
@@ -160,10 +160,10 @@ FFmpeg consequently uses the same D3D11 device that owns Unity's texture. `D3D11
 
 `CaptureNativeFrames()` continues to capture after `WaitForEndOfFrame` using public engine APIs, without requiring integration into a project-specific render pipeline. `NativeD3D11Capture.Capture()` compares the actual frame dimensions with the fixed output dimensions:
 
-- Matching dimensions: `ScreenCapture.CaptureScreenshotIntoRenderTexture(m_OutputTexture)` writes directly into the BGRA output texture. No intermediate RGBA texture or separate `Graphics.Blit()` call is required.
+- Matching dimensions: `Graphics.Blit(null, m_OutputTexture)` writes the current framebuffer directly into the BGRA output texture. It calls neither `CaptureScreenshotIntoRenderTexture()` nor an intermediate RGBA texture.
 - Different dimensions: allocate an RGBA texture at the actual rendering size, capture the complete Game View, then use `Graphics.Blit()` to scale it into the BGRA output texture. Rounding odd source dimensions down to even output dimensions also uses this path to avoid cropping image edges.
 
-The current Unity D3D11 implementation obtains the framebuffer through `GrabPixels()`, using a GPU copy for compatible formats and an internal draw for incompatible formats. Direct BGRA capture may therefore still execute an internal engine blit; it removes the intermediate RGBA texture and its additional transfer. An additional sRGB write conversion is disabled while writing BGRA, and the previous state is restored afterwards. The scaling path remains because rectangle limits in framebuffer capture are not equivalent to scaling the complete image.
+The current Unity D3D11 implementation handles `Graphics.Blit()` with a null source by obtaining the framebuffer through `GrabPixels()`. It uses a GPU copy for compatible formats and an internal draw for incompatible formats. The internal draw converts the framebuffer directly into BGRA, removing the intermediate RGBA texture and its additional transfer. An additional sRGB write conversion is disabled while writing BGRA, and the previous state is restored afterwards. The screenshot-and-scale path remains for different dimensions because rectangle limits in framebuffer capture are not equivalent to scaling the complete image.
 
 `mc_queue_frame(handle, texturePointer, audioSample)` retains the session, a `ComPtr` reference to the texture and the capture time, then returns a request ID. It does not perform the texture copy. C# passes the ID to `CommandBuffer.IssuePluginEventAndData()` and submits the command buffer through `Graphics.ExecuteCommandBuffer()`. Event ID `0` submits a frame; `mc_get_render_callback()` provides the callback address.
 

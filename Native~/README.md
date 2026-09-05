@@ -58,7 +58,7 @@ The broad BtbN shared build was used during initial development but is not the f
 
 ## Ownership and threading
 
-C# captures Game View at frame end directly into the BGRA output texture when source and output dimensions match. Only when scaling is required does it allocate an RGBA intermediate, capture the complete source image and blit into BGRA. It then submits a plugin event, which copies into a free native texture and inserts a D3D11 completion query. Only completed textures reach the encoder worker. A texture remains unavailable until all of its frame leases, including references retained for frame duplication, are released.
+At frame end, C# calls `Graphics.Blit(null, outputTexture)` when source and output dimensions match, writing the current framebuffer directly into the BGRA output texture. Only when scaling is required does it allocate an RGBA intermediate, capture the complete source image and blit into BGRA. It then submits a plugin event, which copies into a free native texture and inserts a D3D11 completion query. Only completed textures reach the encoder worker. A texture remains unavailable until all of its frame leases, including references retained for frame duplication, are released.
 
 The plugin shares Unity's device with the worker and enables D3D11 multithread protection. It preserves the original setting and restores it after the last session releases the device. Control exports and render callbacks serialize session lifetime changes; encoding uses its own queue lock. Pending render requests use IDs so late events after cancellation do not dereference deleted requests.
 

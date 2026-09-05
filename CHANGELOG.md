@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Capture directly into the fixed BGRA output texture when Game View dimensions match; allocate the RGBA intermediate only for scaling and release it when matching dimensions resume. Preserve frame-end capture, native texture ownership and complete-image scaling; report only allocated capture texture memory.
+- Blit the current framebuffer directly into the fixed BGRA output texture when Game View dimensions match, without calling the screenshot API or allocating an RGBA intermediate. Allocate the intermediate only for scaling and release it when matching dimensions resume. Preserve frame-end capture, native texture ownership and complete-image scaling; report only allocated capture texture memory.
 - Read the Game View render size directly when starting native recording from an Editor tool; prevent tool-window dimensions from causing a first-frame size mismatch or incorrect output aspect ratio.
 - Keep native output dimensions fixed and recreate the GPU source texture when Game View changes size, allowing recording to continue with GPU scaling.
 - Expand the English and Chinese guides with architecture selection, component responsibilities, GPU resource ownership, fixed output dimensions and encoding-quality limitations.
