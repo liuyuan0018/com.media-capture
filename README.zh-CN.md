@@ -2,7 +2,7 @@
 
 [English](README.md) · **简体中文**
 
-本包将 **Unity Game View 最终渲染结果和游戏进程音频**录制为 H.264 + AAC MP4 文件。默认后端采用 **Windows x64 / D3D11 / NVIDIA NVENC**：Unity 提供 GPU 纹理，原生插件通过 FFmpeg 硬件帧接口将纹理提交给 NVENC 编码。
+Unity Media Capture 是**面向 Unity 应用内部的高性能音视频采集方案**，将 **Unity Game View 最终渲染结果和游戏进程音频**录制为 H.264 + AAC MP4 文件。默认后端采用 **Windows x64 / D3D11 / NVIDIA NVENC**：Unity 提供 GPU 纹理，原生插件通过 FFmpeg 硬件帧接口将纹理提交给 NVENC 编码。
 
 版本 **0.3.0**。本包代码使用 [MIT](LICENSE)；FFmpeg 库使用 LGPL 2.1 或更新许可，见[第三方许可](ThirdPartyNotices.md)。
 
@@ -71,6 +71,8 @@ Game.exe -force-d3d11 -gameFrameworkRecord "D:\Recordings\game.mp4" -gameFramewo
 它使用默认原生后端并保留中间素材。必须运行有画面渲染的 Player；无图形或 `-nographics` 会话无法提供录制帧。启动入口将完成或失败写入日志，不会自动退出应用。当前版本尚未在构建出的 Player 中验证。
 
 ## 方案选型
+
+性能设计针对 Unity 内部采集：默认原生后端通过 GPU 纹理传递视频帧并使用硬件视频编码，避免将完整视频帧像素回读到 CPU 内存。这一定位不表示本包比桌面、窗口或游戏录屏软件更快；当前尚未进行与这些软件的受控性能对比。Blit、GPU 纹理复制、同步和编码仍然存在开销。
 
 当前实现以游戏运行期间的实时录制为目标，优先减少 CPU 原始像素处理、图片文件读写和停止后的整段视频编码，同时限制采集队列的内存占用。输出采用固定帧率 H.264 + AAC MP4；平台范围限定为 Windows D3D11。
 

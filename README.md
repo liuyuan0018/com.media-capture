@@ -2,7 +2,7 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-This package records the **final Unity Game View rendering and game-process audio** to H.264 + AAC MP4. The default backend uses **Windows x64 / D3D11 / NVIDIA NVENC**: Unity supplies GPU textures, and a native plugin submits them to NVENC through FFmpeg hardware-frame interfaces.
+Unity Media Capture is a **high-performance audio and video capture solution for use within Unity applications**. It records the **final Unity Game View rendering and game-process audio** to H.264 + AAC MP4. The default backend uses **Windows x64 / D3D11 / NVIDIA NVENC**: Unity supplies GPU textures, and a native plugin submits them to NVENC through FFmpeg hardware-frame interfaces.
 
 Version **0.3.0**. Package code: [MIT](LICENSE). FFmpeg libraries: LGPL 2.1 or later; see [third-party notices](ThirdPartyNotices.md).
 
@@ -71,6 +71,8 @@ Game.exe -force-d3d11 -gameFrameworkRecord "D:\Recordings\game.mp4" -gameFramewo
 It uses the default native backend and retains intermediates. Run a rendered Player; a headless or `-nographics` session cannot provide Game View frames. The bootstrap logs completion or failure and does not quit the application automatically. This version has not been validated in a built Player.
 
 ## Architecture selection
+
+The performance design focuses on capture within Unity: the default native backend passes video frames through GPU textures and uses hardware video encoding, avoiding full-frame pixel readback to CPU memory. This positioning does not imply a performance advantage over desktop, window or game capture software. No controlled benchmark against such software has been performed. Blit, GPU texture copies, synchronization and encoding still incur costs.
 
 The implementation targets real-time recording during gameplay. Its priorities are reducing raw-pixel processing on the CPU, intermediate image-file I/O and full video encoding after stop, while bounding capture-queue memory. The output is constant-frame-rate H.264 + AAC MP4, with the platform scope restricted to Windows D3D11.
 
