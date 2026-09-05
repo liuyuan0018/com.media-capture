@@ -1,0 +1,186 @@
+import AppKit
+import AVFoundation
+import CoreVideo
+import Foundation
+
+func fail(_ message: String, _ code: Int32) -> Never {
+    fputs("media-capture: \(message)\n", stderr)
+    exit(code)
+}
+
+guard CommandLine.arguments.count == 8 else {
+    fail("usage: encoder <frames.tsv> <audio.wav> <output.mp4> <fps-num> <fps-den> <audio-frames> <sample-rate>", 2)
+}
+
+let framesListURL = URL(fileURLWithPath: CommandLine.arguments[1])
+let audioURL = URL(fileURLWithPath: CommandLine.arguments[2])
+let outputURL = URL(fileURLWithPath: CommandLine.arguments[3])
+guard let fpsNumerator = Int32(CommandLine.arguments[4]),
+      let fpsDenominator = Int32(CommandLine.arguments[5]),
+      let audioFrames = Int64(CommandLine.arguments[6]),
+      let sampleRate = Int32(CommandLine.arguments[7]),
+      fpsNumerator > 0, fpsDenominator > 0, audioFrames > 0, sampleRate > 0 else {
+    fail("invalid timebase arguments", 3)
+}
+
+let frameLines = try String(contentsOf: framesListURL, encoding: .utf8)
+    .split(whereSeparator: \.isNewline)
+let frameURLs: [URL] = frameLines.compactMap { line in
+    let columns = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+    guard columns.count == 2 else { return nil }
+    return URL(fileURLWithPath: String(columns[1]))
+}
+guard let firstURL = frameURLs.first,
+      let firstImage = NSImage(contentsOf: firstURL),
+      let firstCGImage = firstImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    fail("no readable PNG frames", 4)
+}
+
+let width = firstCGImage.width & ~1
+let height = firstCGImage.height & ~1
+guard width > 0, height > 0 else { fail("invalid framebuffer dimensions", 5) }
+
+let temporaryVideoURL = outputURL.deletingLastPathComponent()
+    .appendingPathComponent(".\(UUID().uuidString)-video.mp4")
+try? FileManager.default.removeItem(at: temporaryVideoURL)
+try? FileManager.default.removeItem(at: outputURL)
+
+func encodeVideo() throws {
+    let writer = try AVAssetWriter(outputURL: temporaryVideoURL, fileType: .mp4)
+    writer.shouldOptimizeForNetworkUse = true
+    let videoInput = AVAssetWriterInput(
+        mediaType: .video,
+        outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: 6_000_000,
+                AVVideoExpectedSourceFrameRateKey: Double(fpsNumerator) / Double(fpsDenominator),
+                AVVideoMaxKeyFrameIntervalKey: max(1, Int(Double(fpsNumerator) / Double(fpsDenominator) * 2.0)),
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+            ]
+        ]
+    )
+    videoInput.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+        assetWriterInput: videoInput,
+        sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+    )
+    guard writer.canAdd(videoInput) else { fail("AVAssetWriter rejected video input", 6) }
+    writer.add(videoInput)
+    guard writer.startWriting() else {
+        fail("video writer start failed: \(writer.error?.localizedDescription ?? "unknown")", 7)
+    }
+    writer.startSession(atSourceTime: .zero)
+
+    var cachedURL: URL?
+    var cachedImage: CGImage?
+    for (index, frameURL) in frameURLs.enumerated() {
+        autoreleasepool {
+            while !videoInput.isReadyForMoreMediaData {
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+
+            if cachedURL != frameURL {
+                cachedURL = frameURL
+                cachedImage = NSImage(contentsOf: frameURL)?.cgImage(
+                    forProposedRect: nil,
+                    context: nil,
+                    hints: nil
+                )
+            }
+            guard let image = cachedImage else { fail("unreadable frame: \(frameURL.path)", 8) }
+
+            var pixelBuffer: CVPixelBuffer?
+            guard let pool = adaptor.pixelBufferPool,
+                  CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer) == kCVReturnSuccess,
+                  let buffer = pixelBuffer else {
+                fail("pixel buffer allocation failed", 9)
+            }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let bitmapInfo = CGBitmapInfo.byteOrder32Little.union(
+                CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
+            )
+            guard let context = CGContext(
+                data: CVPixelBufferGetBaseAddress(buffer),
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo.rawValue
+            ) else {
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+                fail("bitmap context creation failed", 10)
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+
+            let presentationTime = CMTime(
+                value: Int64(index) * Int64(fpsDenominator),
+                timescale: fpsNumerator
+            )
+            guard adaptor.append(buffer, withPresentationTime: presentationTime) else {
+                fail("video frame \(index) append failed: \(writer.error?.localizedDescription ?? "unknown")", 11)
+            }
+        }
+    }
+    videoInput.markAsFinished()
+    let finished = DispatchSemaphore(value: 0)
+    writer.finishWriting { finished.signal() }
+    finished.wait()
+    guard writer.status == .completed else {
+        fail("video writer failed: \(writer.error?.localizedDescription ?? "unknown")", 12)
+    }
+}
+
+func muxAudio() throws {
+    let videoAsset = AVURLAsset(url: temporaryVideoURL)
+    let audioAsset = AVURLAsset(url: audioURL)
+    let composition = AVMutableComposition()
+    guard let sourceVideo = videoAsset.tracks(withMediaType: .video).first,
+          let sourceAudio = audioAsset.tracks(withMediaType: .audio).first,
+          let destinationVideo = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+          ),
+          let destinationAudio = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+          ) else {
+        fail("captured video or WAV audio track is missing", 13)
+    }
+
+    let duration = CMTime(value: audioFrames, timescale: sampleRate)
+    try destinationVideo.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: sourceVideo, at: .zero)
+    try destinationAudio.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: sourceAudio, at: .zero)
+    destinationVideo.preferredTransform = sourceVideo.preferredTransform
+
+    guard let exporter = AVAssetExportSession(
+        asset: composition,
+        presetName: AVAssetExportPresetHighestQuality
+    ) else {
+        fail("AVAssetExportSession is unavailable", 14)
+    }
+    exporter.outputURL = outputURL
+    exporter.outputFileType = .mp4
+    exporter.shouldOptimizeForNetworkUse = true
+    exporter.timeRange = CMTimeRange(start: .zero, duration: duration)
+    let finished = DispatchSemaphore(value: 0)
+    exporter.exportAsynchronously { finished.signal() }
+    finished.wait()
+    guard exporter.status == .completed else {
+        fail("MP4 export failed: \(exporter.error?.localizedDescription ?? "unknown")", 15)
+    }
+}
+
+defer { try? FileManager.default.removeItem(at: temporaryVideoURL) }
+try encodeVideo()
+try muxAudio()
+print("encoded \(frameURLs.count) CFR frames, \(audioFrames) audio frames -> \(outputURL.path)")

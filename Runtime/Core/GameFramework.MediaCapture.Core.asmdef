@@ -1,0 +1,7 @@
+{
+  "name": "GameFramework.MediaCapture.Core",
+  "rootNamespace": "GameFramework.MediaCapture",
+  "references": [],
+  "autoReferenced": false,
+  "noEngineReferences": true
+}

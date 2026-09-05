@@ -1,0 +1,20 @@
+{
+  "name": "com.gameframework.media-capture",
+  "displayName": "Game Framework Media Capture",
+  "version": "0.3.0",
+  "unity": "2022.3",
+  "description": "Game View and process-audio recording with native FFmpeg D3D11/NVENC H.264 and AAC on Windows; explicit legacy image-sequence backends retained.",
+  "dependencies": {
+    "com.unity.collections": "2.1.4"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Game Framework Contributors"
+  },
+  "keywords": [
+    "recording",
+    "capture",
+    "video",
+    "audio"
+  ]
+}

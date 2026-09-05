@@ -1,0 +1,13 @@
+{
+  "name": "GameFramework.MediaCapture.Unity",
+  "rootNamespace": "GameFramework.MediaCapture.Unity",
+  "references": [
+    "GameFramework.MediaCapture.Core",
+    "Unity.Collections",
+    "UnityEditor.UI",
+    "UnityEngine.UI"
+  ],
+  "allowUnsafeCode": true,
+  "autoReferenced": false,
+  "noEngineReferences": false
+}

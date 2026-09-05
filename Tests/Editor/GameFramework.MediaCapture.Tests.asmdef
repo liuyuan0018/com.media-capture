@@ -1,0 +1,14 @@
+{
+  "name": "GameFramework.MediaCapture.Tests",
+  "rootNamespace": "GameFramework.MediaCapture.Tests",
+  "references": [
+    "GameFramework.MediaCapture.Core"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "autoReferenced": false
+}
