@@ -265,7 +265,19 @@ Native sessions write `manifest.json` under `.media-capture-*` beside the destin
 
 ## Validation results and applicability
 
-Before the direct-BGRA optimization, one 20-second same-scene comparison measured 173.56 game FPS for native recording versus 162.42 for the previous image pipeline, with finalization taking 1.10 seconds versus 8.90 seconds. Estimated recording texture memory was 79.1 MiB versus 23.7 MiB. These simple-scene measurements use different encoder settings; they are neither a matched-quality compression benchmark nor measurements of this optimization. Matching-size direct capture removes one full-size RGBA texture, approximately 7.9 MiB at 1920×1080; its timing benefit has not been measured. See the [validation report](Native~/VALIDATION.md) for CPU measurements, audio/video timing and limitations.
+Before the direct-BGRA optimization, one 20-second same-scene comparison measured 173.56 game FPS for native recording versus 162.42 for the previous image pipeline, with finalization taking 1.10 seconds versus 8.90 seconds. These simple-scene measurements use different encoder settings; they are neither a matched-quality compression benchmark nor measurements of this optimization. Its timing benefit has not been measured. See the [validation report](Native~/VALIDATION.md) for CPU measurements, audio/video timing and limitations.
+
+At 1920×1080, one RGBA/BGRA texture contains `1920 × 1080 × 4 = 8,294,400` bytes of pixels, approximately 7.91 MiB (`1 MiB = 1,048,576 bytes`). The recording texture estimates break down as follows:
+
+| Configuration | Recording GPU textures | Estimated pixel storage |
+| --- | --- | ---: |
+| Native backend before direct Blit | 1 RGBA intermediate + 1 BGRA output + 8 native pool textures | 79.1 MiB |
+| Current native backend, matching source/output dimensions | 1 BGRA output + 8 native pool textures | 71.2 MiB |
+| Previous image-sequence backend in the comparison | 3 capture textures for asynchronous GPU readback | 23.7 MiB |
+
+The native plugin preallocates `GpuTexturePoolSize` textures, 8 by default. It copies each captured frame into an available pool texture so Unity can write the next frame while GPU copying and encoding of earlier frames complete. A pool texture becomes reusable only after all frame references are released. The 8 allocated textures do not imply that 8 frames are always waiting for encoding. The previous pipeline moves pixels into CPU memory for image processing and also preallocated 23.7 MiB of CPU pixel buffers in this comparison.
+
+The current 71.2 MiB figure is calculated from texture dimensions and allocation counts, not a new GPU memory measurement. Scaling adds an RGBA intermediate at the actual source dimensions. These estimates cover recording texture pixel storage only; they exclude driver and encoder internal allocations, allocation alignment and temporary resources pending destruction.
 
 Windows 11 / Unity 2022.3.67f1 / D3D11 / RTX 3070 tests cover native texture encoding, 1080p Game View capture, process audio, text orientation and red/green/blue transitions. Samples exclude editor UI. See the [development and validation record](Native~/DEVELOPMENT_PLAN.md) for evidence, remaining checks and devices not covered.
 
