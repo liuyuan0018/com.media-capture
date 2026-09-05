@@ -1,4 +1,4 @@
-# Game Framework Media Capture
+# Unity Media Capture
 
 [English](README.md) · **简体中文**
 
