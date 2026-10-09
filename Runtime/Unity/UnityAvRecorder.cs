@@ -76,6 +76,7 @@ namespace GameFramework.MediaCapture.Unity
         private double frameEncodeMilliseconds;
         private double maxFrameEncodeMilliseconds;
         private int mainThreadBudgetExceededEvents;
+        private bool previousRunInBackground, capturedRuntimeSettings;
         private long droppedAudioFrames;
         private RecordingAudioCaptureStop m_ProcessAudioStatistics;
         private CancellationTokenRegistration m_StopCancellationRegistration;
@@ -105,7 +106,7 @@ namespace GameFramework.MediaCapture.Unity
             try
             {
                 recorder.Begin(recordingOptions, encoderBackend ?? CreateDefaultBackend(),
-                    encoderBackend == null && recordingOptions.VideoBackend == RecordingVideoBackend.NativeD3D11);
+                    encoderBackend == null && recordingOptions.VideoBackend != RecordingVideoBackend.ImageSequence);
                 Active = recorder;
                 return recorder;
             }
@@ -176,18 +177,26 @@ namespace GameFramework.MediaCapture.Unity
 
             State = RecordingState.Aborted;
             lifetimeCancellation.Cancel();
+            RestoreRuntimeSettings();
             if (frameCoroutine != null)
             {
                 StopCoroutine(frameCoroutine);
             }
 
             audioTap?.End();
-            audioWriter?.Dispose();
+            // FinishNativeAsync owns the writer once stop has started. In particular,
+            // cancellation must not dispose its stream while Finish is draining it.
+            if (finishingTask == null)
+            {
+                audioWriter?.Dispose();
+                audioWriter = null;
+            }
             processAudioBackend?.AbortAudioCapture();
             if (m_NativeCapture != null)
             {
                 WriteNativeManifest("aborted", "Recording was aborted before finalization.", 0);
                 m_NativeCapture.Retire();
+                if (finishingTask == null) ReleaseCaptureResources();
                 return;
             }
             WriteDiagnosticManifest("aborted", "Recording was aborted before finalization.", 0, 0);
@@ -213,9 +222,22 @@ namespace GameFramework.MediaCapture.Unity
             processAudioBackend = backend as IRecordingProcessAudioBackend;
             if (useNative)
             {
-                if (!(backend is WindowsMediaFoundationBackend))
-                    throw new PlatformNotSupportedException("Native recording requires Windows D3D11 and WASAPI process audio.");
-                m_NativeCapture = new NativeD3D11Capture(options, Path.Combine(sessionDirectory, "video.mp4"), 48000);
+                RecordingVideoBackend choice = options.VideoBackend;
+                if (choice == RecordingVideoBackend.Automatic)
+                {
+#if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+                    choice = RecordingVideoBackend.NativeMetal;
+#else
+                    choice = RecordingVideoBackend.NativeD3D11;
+#endif
+                }
+                string videoPath = Path.Combine(sessionDirectory, "video.mp4");
+                if (choice == RecordingVideoBackend.NativeMetal)
+                    m_NativeCapture = new NativeMetalCapture(options, videoPath,
+                        AudioSettings.outputSampleRate > 0 ? AudioSettings.outputSampleRate : 48000);
+                else if (choice == RecordingVideoBackend.NativeD3D11)
+                    m_NativeCapture = new NativeD3D11Capture(options, videoPath, 48000);
+                else throw new PlatformNotSupportedException("Unsupported native recording backend: " + choice);
             }
             if (processAudioBackend != null)
             {
@@ -250,6 +272,9 @@ namespace GameFramework.MediaCapture.Unity
                 sessionStartDsp = AudioSettings.dspTime;
                 audioTap.Begin(audioWriter, sessionStartDsp, sampleRate);
             }
+            previousRunInBackground = Application.runInBackground;
+            capturedRuntimeSettings = true;
+            Application.runInBackground = true;
             State = RecordingState.Recording;
             frameCoroutine = StartCoroutine(useNative ? CaptureNativeFrames() : CaptureFrames());
         }
@@ -821,8 +846,16 @@ namespace GameFramework.MediaCapture.Unity
             }
         }
 
+        private void RestoreRuntimeSettings()
+        {
+            if (!capturedRuntimeSettings) return;
+            Application.runInBackground = previousRunInBackground;
+            capturedRuntimeSettings = false;
+        }
+
         private void ReleaseCaptureResources()
         {
+            RestoreRuntimeSettings();
             audioWriter?.Dispose();
             audioWriter = null;
             if (audioTap != null)

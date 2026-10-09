@@ -8,11 +8,11 @@ using UnityEngine.Rendering;
 
 namespace GameFramework.MediaCapture.Unity
 {
-    internal sealed class NativeD3D11Capture : INativeVideoCapture
+    internal sealed class NativeMetalCapture : INativeVideoCapture
     {
-        private const string LIBRARY = "GameFrameworkMediaCapture";
+        private const string LIBRARY = "MediaCaptureMetal";
         private const int ERROR_CAPACITY = 2048;
-        internal const string BACKEND_NAME = "FFmpeg D3D11 / h264_nvenc + WASAPI / AAC";
+        internal const string BACKEND_NAME = "Metal / VideoToolbox H.264 + Unity Audio / AAC";
 
         [StructLayout(LayoutKind.Sequential)]
         private struct NativeOptions
@@ -29,7 +29,7 @@ namespace GameFramework.MediaCapture.Unity
             internal IntPtr VideoPath;
         }
 
-        private static readonly List<NativeD3D11Capture> s_Retiring = new List<NativeD3D11Capture>();
+        private static readonly List<NativeMetalCapture> s_Retiring = new List<NativeMetalCapture>();
         private static NativeCaptureCleanup s_Cleanup;
         private readonly byte[] m_Error = new byte[ERROR_CAPACITY];
         private ulong m_Handle;
@@ -38,12 +38,13 @@ namespace GameFramework.MediaCapture.Unity
         private CommandBuffer m_RenderCommands;
         private RenderTexture m_GameViewTexture;
         private RenderTexture m_OutputTexture;
+        private Material m_ColorMaterial;
         private int m_SourceWidth;
         private int m_SourceHeight;
         private bool m_Retired;
 
         public string BackendName => BACKEND_NAME;
-        public bool HardwareEncodingConfirmed => true; // Native creation requires NVENC.
+        public bool HardwareEncodingConfirmed { get; private set; }
         public NativeCaptureStatus Status { get; private set; }
         public string Error { get; private set; } = string.Empty;
         public int Width { get; private set; }
@@ -52,15 +53,19 @@ namespace GameFramework.MediaCapture.Unity
             (m_GameViewTexture != null ? (long)m_GameViewTexture.width * m_GameViewTexture.height * 4 : 0) +
             (m_OutputTexture != null ? (long)m_OutputTexture.width * m_OutputTexture.height * 4 : 0);
 
-        internal NativeD3D11Capture(RecordingOptions options, string videoPath, int sampleRate)
+        internal NativeMetalCapture(RecordingOptions options, string videoPath, int sampleRate)
         {
-#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
-            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D11)
-                throw new PlatformNotSupportedException("Native recording requires Windows D3D11.");
+#if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Metal)
+                throw new PlatformNotSupportedException("Native recording requires macOS Metal.");
             try
             {
-                m_Callback = mc_get_render_callback();
-                m_RenderCommands = new CommandBuffer { name = "Media Capture D3D11" };
+                Shader colorShader = Resources.Load<Shader>("GameFrameworkMediaCapture/MetalCaptureColor");
+                if (colorShader == null) throw new InvalidOperationException("Metal capture color shader is missing.");
+                m_ColorMaterial = new Material(colorShader) { hideFlags = HideFlags.HideAndDontSave };
+                m_ColorMaterial.SetFloat("_EncodeSRGB", QualitySettings.activeColorSpace == ColorSpace.Linear ? 1f : 0f);
+                m_Callback = mcmetal_get_render_callback();
+                m_RenderCommands = new CommandBuffer { name = "Media Capture Metal" };
 #if UNITY_EDITOR
                 // 编辑器按钮回调中的 Screen 可能返回工具窗口的尺寸，直接读取 Game View 渲染尺寸。
                 Vector2 gameViewSize = UnityEditor.Handles.GetMainGameViewSize();
@@ -90,10 +95,11 @@ namespace GameFramework.MediaCapture.Unity
                         Quality = options.HardwareQuality, MaxLagMilliseconds = options.MaxEncodingLagMilliseconds,
                         VideoPath = path
                     };
-                    m_Handle = mc_create(m_NativeTexture, ref nativeOptions, m_Error, m_Error.Length);
+                    m_Handle = mcmetal_create(m_NativeTexture, ref nativeOptions, m_Error, m_Error.Length);
                     if (m_Handle == 0) throw new InvalidOperationException(DecodeError());
                 }
                 finally { Marshal.FreeHGlobal(path); }
+                HardwareEncodingConfirmed = mcmetal_hardware(m_Handle) != 0;
                 RefreshStatus();
                 EnsureCleanup();
             }
@@ -103,7 +109,7 @@ namespace GameFramework.MediaCapture.Unity
                 throw;
             }
 #else
-            throw new PlatformNotSupportedException("Native recording requires Windows D3D11.");
+            throw new PlatformNotSupportedException("Native recording requires macOS Metal.");
 #endif
         }
 
@@ -114,24 +120,14 @@ namespace GameFramework.MediaCapture.Unity
             int sourceWidth = Screen.width;
             int sourceHeight = Screen.height;
             if (sourceWidth <= 0 || sourceHeight <= 0) return;
-            bool needsScaling = sourceWidth != Width || sourceHeight != Height;
-            if (needsScaling)
+            if (m_GameViewTexture == null || sourceWidth != m_SourceWidth || sourceHeight != m_SourceHeight)
             {
-                if (m_GameViewTexture == null || sourceWidth != m_SourceWidth || sourceHeight != m_SourceHeight)
-                {
-                    RenderTexture replacement = CreateTexture(sourceWidth, sourceHeight,
-                        GraphicsFormat.R8G8B8A8_UNorm, "Media Capture Game View RGBA");
-                    if (m_GameViewTexture != null) UnityEngine.Object.Destroy(m_GameViewTexture);
-                    m_GameViewTexture = replacement;
-                }
-                // 先取得完整画面，再缩放；直接采集到不同尺寸的纹理可能裁剪画面。
-                ScreenCapture.CaptureScreenshotIntoRenderTexture(m_GameViewTexture);
+                RenderTexture replacement = CreateTexture(sourceWidth, sourceHeight,
+                    GraphicsFormat.R8G8B8A8_UNorm, "Media Capture Linear Game View");
+                if (m_GameViewTexture != null) UnityEngine.Object.Destroy(m_GameViewTexture);
+                m_GameViewTexture = replacement;
             }
-            else if (m_GameViewTexture != null)
-            {
-                UnityEngine.Object.Destroy(m_GameViewTexture);
-                m_GameViewTexture = null;
-            }
+            ScreenCapture.CaptureScreenshotIntoRenderTexture(m_GameViewTexture);
             m_SourceWidth = sourceWidth;
             m_SourceHeight = sourceHeight;
             bool wasSrgbWrite = GL.sRGBWrite;
@@ -139,29 +135,22 @@ namespace GameFramework.MediaCapture.Unity
             try
             {
                 GL.sRGBWrite = false;
-                if (needsScaling)
-                {
-                    Graphics.Blit(m_GameViewTexture, m_OutputTexture);
-                }
-                else
-                {
-                    // 同尺寸直接把帧缓冲 Blit 到 BGRA，无需截图 API 和 RGBA 中间纹理。
-                    Graphics.Blit(null, m_OutputTexture);
-                }
+                // The screenshot in an UNorm target contains linear light in a Linear
+                // project. Encode display RGB on the GPU before handing bytes to VideoToolbox.
+                Graphics.Blit(m_GameViewTexture, m_OutputTexture, m_ColorMaterial);
             }
             finally
             {
                 GL.sRGBWrite = wasSrgbWrite;
                 RenderTexture.active = previousTarget;
             }
-            IntPtr request = mc_queue_frame(m_Handle, m_NativeTexture, audioSample);
+            IntPtr request = mcmetal_queue_frame(m_Handle, m_NativeTexture, audioSample);
             if (request != IntPtr.Zero) IssueEvent(0, request);
         }
 
         public void Poll()
         {
             if (m_Retired || m_Handle == 0) return;
-            IssueEvent(1, new IntPtr(unchecked((long)m_Handle)));
             RefreshStatus();
         }
 
@@ -171,7 +160,7 @@ namespace GameFramework.MediaCapture.Unity
             IntPtr output = AllocateUtf8(outputPath);
             try
             {
-                if (mc_stop(m_Handle, samples, audio, output) == 0)
+                if (mcmetal_stop(m_Handle, samples, audio, output) == 0)
                 {
                     RefreshStatus();
                     throw new InvalidOperationException(string.IsNullOrEmpty(Error) ? "Native recorder rejected stop." : Error);
@@ -184,7 +173,7 @@ namespace GameFramework.MediaCapture.Unity
         {
             if (m_Retired) return;
             m_Retired = true;
-            if (m_Handle != 0) mc_abort(m_Handle);
+            if (m_Handle != 0) mcmetal_abort(m_Handle);
             if (TryRelease()) return;
             s_Retiring.Add(this);
             EnsureCleanup();
@@ -198,10 +187,12 @@ namespace GameFramework.MediaCapture.Unity
 
         private bool TryRelease()
         {
-            if (m_Handle != 0 && mc_destroy(m_Handle) == 0) return false;
+            if (m_Handle != 0 && mcmetal_destroy(m_Handle) == 0) return false;
             m_Handle = 0;
             m_RenderCommands?.Dispose();
             m_RenderCommands = null;
+            if (m_ColorMaterial != null) UnityEngine.Object.Destroy(m_ColorMaterial);
+            m_ColorMaterial = null;
             if (m_OutputTexture != null) UnityEngine.Object.Destroy(m_OutputTexture);
             if (m_GameViewTexture != null) UnityEngine.Object.Destroy(m_GameViewTexture);
             m_OutputTexture = null;
@@ -226,15 +217,15 @@ namespace GameFramework.MediaCapture.Unity
         internal static void Shutdown()
         {
             UnityAvRecorder.Active?.Abort();
-#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
-            mc_shutdown();
+#if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+            mcmetal_shutdown();
 #endif
             PumpCleanup();
         }
 
         private void RefreshStatus()
         {
-            if (mc_status(m_Handle, out NativeCaptureStatus status, m_Error, m_Error.Length) == 0)
+            if (mcmetal_status(m_Handle, out NativeCaptureStatus status, m_Error, m_Error.Length) == 0)
                 throw new InvalidOperationException("Native recording session is unavailable.");
             Status = status;
             Error = DecodeError();
@@ -280,20 +271,22 @@ namespace GameFramework.MediaCapture.Unity
         }
 
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern ulong mc_create(IntPtr source, ref NativeOptions options, [Out] byte[] error, int capacity);
+        private static extern int mcmetal_hardware(ulong handle);
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr mc_queue_frame(ulong handle, IntPtr source, long sample);
+        private static extern ulong mcmetal_create(IntPtr source, ref NativeOptions options, [Out] byte[] error, int capacity);
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr mc_get_render_callback();
+        private static extern IntPtr mcmetal_queue_frame(ulong handle, IntPtr source, long sample);
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int mc_status(ulong handle, out NativeCaptureStatus status, [Out] byte[] error, int capacity);
+        private static extern IntPtr mcmetal_get_render_callback();
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int mc_stop(ulong handle, long samples, IntPtr audio, IntPtr output);
+        private static extern int mcmetal_status(ulong handle, out NativeCaptureStatus status, [Out] byte[] error, int capacity);
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void mc_abort(ulong handle);
+        private static extern int mcmetal_stop(ulong handle, long samples, IntPtr audio, IntPtr output);
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int mc_destroy(ulong handle);
+        private static extern void mcmetal_abort(ulong handle);
         [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void mc_shutdown();
+        private static extern int mcmetal_destroy(ulong handle);
+        [DllImport(LIBRARY, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void mcmetal_shutdown();
     }
 }

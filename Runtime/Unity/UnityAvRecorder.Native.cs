@@ -10,12 +10,33 @@ namespace GameFramework.MediaCapture.Unity
 {
     public sealed partial class UnityAvRecorder
     {
-        private NativeD3D11Capture m_NativeCapture;
+        private INativeVideoCapture m_NativeCapture;
         private string m_NativeFailure;
         private int m_NativePeakQueue;
         private long m_NativeGpuBytes;
+        private int m_NativeRenderCallbacks, m_NativeRateSkipped;
 
-        public string BackendName => m_NativeCapture != null ? NativeD3D11Capture.BACKEND_NAME : backend?.Name;
+        private long NativeFrameOrdinal(ref long sample)
+        {
+            if (!(m_NativeCapture is NativeMetalCapture))
+                return options.FrameRate.FrameAtOrBeforeSample(sample, sampleRate);
+            // DSP is the master clock for replay, captured audio and final mux duration.
+            // It advances in blocks, so admit the next CFR frame within a bounded
+            // sub-frame window instead of alternately dropping/duplicating at a boundary.
+            // No independent wall clock accumulates drift during long Editor takes.
+            double period = sampleRate * (double)options.FrameRateDenominator / options.FrameRateNumerator;
+            long ordinal = lastCaptureOrdinal < 0
+                ? options.FrameRate.FrameAtOrBeforeSample(sample, sampleRate)
+                : lastCaptureOrdinal + 1;
+            double due = ordinal * period;
+            if (sample < due - period * 0.75) return lastCaptureOrdinal;
+            if (sample > due + period)
+                ordinal = options.FrameRate.FrameAtOrBeforeSample(sample, sampleRate);
+            sample = options.FrameRate.SampleAtFrame(ordinal, sampleRate);
+            return ordinal;
+        }
+
+        public string BackendName => m_NativeCapture != null ? m_NativeCapture.BackendName : backend?.Name;
         public long CapturedFrameCount => m_NativeCapture != null ? m_NativeCapture.Status.Captured : capturedFrames.Count;
         public long EncodedFrameCount => m_NativeCapture != null ? m_NativeCapture.Status.Encoded : 0;
         public long DroppedFrameCount => droppedVideoFrames + (m_NativeCapture != null ? m_NativeCapture.Status.Dropped : 0);
@@ -29,12 +50,13 @@ namespace GameFramework.MediaCapture.Unity
                 yield return wait;
                 try
                 {
+                    m_NativeRenderCallbacks++;
                     m_NativeCapture.Poll();
                     if (m_NativeCapture.Status.State >= 3)
                         throw new IOException(m_NativeCapture.Error);
                     long sample = GetCurrentSample();
-                    long ordinal = options.FrameRate.FrameAtOrBeforeSample(sample, sampleRate);
-                    if (ordinal <= lastCaptureOrdinal) continue;
+                    long ordinal = NativeFrameOrdinal(ref sample);
+                    if (ordinal <= lastCaptureOrdinal) { m_NativeRateSkipped++; continue; }
                     if (lastCaptureOrdinal >= 0 && ordinal > lastCaptureOrdinal + 1)
                     {
                         int missed = checked((int)(ordinal - lastCaptureOrdinal - 1));
@@ -64,12 +86,25 @@ namespace GameFramework.MediaCapture.Unity
             long audioFrames = 0;
             try
             {
-                long stopTimestamp = processAudioBackend.GetClockTimestamp();
-                RecordingAudioCaptureStop audio = await processAudioBackend.StopAudioCaptureAsync(
-                    stopTimestamp, options.EncoderTimeoutSeconds, cancellationToken);
-                audioFrames = audio.AudioFrames;
-                droppedAudioFrames = audio.DroppedAudioFrames;
-                m_ProcessAudioStatistics = audio;
+                if (processAudioBackend != null)
+                {
+                    long stopTimestamp = processAudioBackend.GetClockTimestamp();
+                    RecordingAudioCaptureStop audio = await processAudioBackend.StopAudioCaptureAsync(
+                        stopTimestamp, options.EncoderTimeoutSeconds, cancellationToken);
+                    audioFrames = audio.AudioFrames;
+                    droppedAudioFrames = audio.DroppedAudioFrames;
+                    m_ProcessAudioStatistics = audio;
+                }
+                else
+                {
+                    audioFrames = Math.Max(1, GetCurrentSample());
+                    audioTap.End();
+                    long expected = audioFrames;
+                    await Task.Run(() => audioWriter.Finish(expected), cancellationToken);
+                    droppedAudioFrames = audioWriter.DroppedFrames;
+                    audioWriter.Dispose();
+                    audioWriter = null;
+                }
                 if (!string.IsNullOrEmpty(m_NativeFailure)) throw new IOException(m_NativeFailure);
                 cancellationToken.ThrowIfCancellationRequested();
                 State = RecordingState.Encoding;
@@ -114,6 +149,8 @@ namespace GameFramework.MediaCapture.Unity
             {
                 processAudioBackend?.AbortAudioCapture();
                 m_NativeCapture.Retire();
+                ReleaseCaptureResources();
+                m_StopCancellationRegistration.Dispose();
                 if (State == RecordingState.Completed && !options.KeepIntermediateFiles)
                 {
                     // Keep diagnostics; only remove files created by this recording session.
@@ -130,7 +167,7 @@ namespace GameFramework.MediaCapture.Unity
 
         private RecordingResult BuildNativeResult(bool success, string message, long audioFrames)
         {
-            NativeD3D11Capture.CaptureStatus status = m_NativeCapture.Status;
+            NativeCaptureStatus status = m_NativeCapture.Status;
             return Result = new RecordingResult(success, options.OutputPath, sessionDirectory, BackendName, message,
                 audioFrames, sampleRate, (int)Math.Min(int.MaxValue, status.Captured), status.Encoded,
                 (int)Math.Min(int.MaxValue, status.Duplicated), (int)Math.Min(int.MaxValue, DroppedFrameCount),
@@ -165,6 +202,16 @@ namespace GameFramework.MediaCapture.Unity
             public long audioInsertedSilenceFrames;
             public long gpuTextureBytes;
             public long cpuPixelReadbackBytes;
+            public bool hardwareEncoding;
+            public int pendingFrames;
+            public int peakQueue;
+            public int renderCallbacks;
+            public int rateSkippedFrames;
+            public int missedRenderCadenceFrames;
+            public long backpressureDroppedFrames;
+            public int frameRateNumerator;
+            public int frameRateDenominator;
+            public int mainThreadBudgetExceededEvents;
             public double averageCaptureMainThreadMilliseconds;
             public double maxCaptureMainThreadMilliseconds;
         }
@@ -188,6 +235,13 @@ namespace GameFramework.MediaCapture.Unity
                     audioTimestampErrorPackets = m_ProcessAudioStatistics.TimestampErrorPackets,
                     audioInsertedSilenceFrames = m_ProcessAudioStatistics.InsertedSilenceFrames,
                     gpuTextureBytes = m_NativeGpuBytes, cpuPixelReadbackBytes = 0,
+                    hardwareEncoding = m_NativeCapture.HardwareEncodingConfirmed,
+                    pendingFrames = m_NativeCapture.Status.Queued, peakQueue = m_NativePeakQueue,
+                    renderCallbacks = m_NativeRenderCallbacks, rateSkippedFrames = m_NativeRateSkipped,
+                    missedRenderCadenceFrames = missedRenderCadenceFrames,
+                    backpressureDroppedFrames = m_NativeCapture.Status.Dropped,
+                    frameRateNumerator = options.FrameRateNumerator, frameRateDenominator = options.FrameRateDenominator,
+                    mainThreadBudgetExceededEvents = mainThreadBudgetExceededEvents,
                     averageCaptureMainThreadMilliseconds = captureMainThreadSamples > 0 ?
                         captureMainThreadMilliseconds / captureMainThreadSamples : 0,
                     maxCaptureMainThreadMilliseconds = maxCaptureMainThreadMilliseconds

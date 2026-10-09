@@ -1,5 +1,8 @@
 # Native Windows recording build
 
+For the macOS Metal/VideoToolbox implementation, see [macOS/README.md](macOS/README.md).
+
+
 [Package guide (English)](../README.md) · [包说明（中文）](../README.zh-CN.md) · [Third-party notices](../ThirdPartyNotices.md)
 
 ## Components

@@ -25,15 +25,17 @@ namespace GameFramework.MediaCapture.Unity
 
     public enum RecordingVideoBackend
     {
-        NativeD3D11,
-        ImageSequence
+        NativeD3D11 = 0,
+        ImageSequence = 1,
+        Automatic = 2,
+        NativeMetal = 3
     }
 
     [Serializable]
     public sealed class RecordingOptions
     {
         public string OutputPath;
-        public RecordingVideoBackend VideoBackend = RecordingVideoBackend.NativeD3D11;
+        public RecordingVideoBackend VideoBackend = RecordingVideoBackend.Automatic;
         public int OutputWidth;
         public int OutputHeight;
         public int HardwareQuality = 20;

@@ -2,7 +2,10 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-Unity Media Capture is a **high-performance audio and video capture solution for use within Unity applications**. It records the **final Unity Game View rendering and game-process audio** to H.264 + AAC MP4. The default backend uses **Windows x64 / D3D11 / NVIDIA NVENC**: Unity supplies GPU textures, and a native plugin submits them to NVENC through FFmpeg hardware-frame interfaces.
+Unity Media Capture is a **high-performance audio and video capture solution for use within Unity applications**. It records the **final Unity Game View rendering and game-process audio** to H.264 + AAC MP4. The Windows native backend uses **Windows x64 / D3D11 / NVIDIA NVENC**: Unity supplies GPU textures, and a native plugin submits them to NVENC through FFmpeg hardware-frame interfaces.
+
+**0.4.0 adds macOS Metal + VideoToolbox hardware recording.** `RecordingVideoBackend.Automatic` selects Metal on macOS and D3D11/NVENC on Windows. Both encode while the game runs and avoid CPU video-pixel readback and image intermediates. The Mac backend uses Unity Audio, with a universal native bundle and GPU color conversion for Linear projects. See the [Mac implementation/build guide](Native~/macOS/README.md) and [measured validation](Native~/macOS/VALIDATION.md). The D3D11 details below describe the Windows backend.
+
 
 Version **0.3.0**. Package code: [MIT](LICENSE). FFmpeg libraries: LGPL 2.1 or later; see [third-party notices](ThirdPartyNotices.md).
 
@@ -14,7 +17,7 @@ WASAPI process loopback captures audio playback from the Unity process and its d
 
 ## Supported configuration
 
-| Item | Default native backend |
+| Item | Windows native backend |
 | --- | --- |
 | Unity | 2022.3; tested on 2022.3.67f1 |
 | OS | Windows x64; process audio requires build 20348 or newer, Windows 11 recommended |
@@ -22,9 +25,9 @@ WASAPI process loopback captures audio playback from the Unity process and its d
 | Hardware | NVIDIA GPU supporting H.264 NVENC and a compatible driver; tested on RTX 3070 |
 | Video | H.264, 8-bit YUV 4:2:0, constant frame rate, even dimensions |
 | Audio | WASAPI PCM16 / 48 kHz / stereo, converted to AAC 192 kb/s on stop |
-| Not implemented | Metal, D3D12, Vulkan, AMD AMF, Intel QSV, HDR video |
+| Not implemented on Windows | D3D12, Vulkan, AMD AMF, Intel QSV, HDR video |
 
-Unsupported configurations return an error. The native backend does not automatically switch to CPU pixel readback or software encoding, preserving predictable performance behavior. The image-sequence backend remains an explicit option. Existing macOS AVFoundation code is retained; native Metal recording is outside the current implementation scope.
+Unsupported configurations return an error. The native backend does not automatically switch to CPU pixel readback or software encoding, preserving predictable performance behavior. The image-sequence backend remains an explicit option. The image-sequence macOS AVFoundation backend remains available explicitly; the new native Metal backend is documented separately.
 
 ## Installation and API usage
 
@@ -84,7 +87,7 @@ The implementation targets real-time recording during gameplay. Its priorities a
 
 FFmpeg supplies codec invocation, timestamps, encoded-packet handling and MP4 muxing, reducing the media-processing logic implemented by this package. NVENC performs H.264 hardware encoding. **Avoiding GPU readback requires compatible D3D11 textures and hardware encoding, same-device resource use and correct synchronization; native DLL integration alone does not establish those conditions.**
 
-Only NVENC is implemented. AMD AMF and Intel QSV hardware-frame integration is not available. FFmpeg support for another encoder does not establish device management or runtime validation in this package. Software encoding is not an automatic fallback; callers must explicitly select another backend.
+The Windows native backend currently implements NVENC only. AMD AMF and Intel QSV hardware-frame integration is not available. FFmpeg support for another encoder does not establish device management or runtime validation in this package. Software encoding is not an automatic fallback; callers must explicitly select another backend.
 
 ## Native FFmpeg integration
 
@@ -245,7 +248,7 @@ The runtime uses four purpose-built FFmpeg shared libraries with the NVENC, AAC,
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `OutputPath` | Required | Absolute `.mp4` path |
-| `VideoBackend` | `NativeD3D11` | Select `ImageSequence` for the previous backend |
+| `VideoBackend` | `Automatic` | Native Metal on macOS; native D3D11 on Windows; select `ImageSequence` explicitly for the previous backend |
 | `FrameRateNumerator / Denominator` | `24 / 1` | For example `30 / 1` or `30000 / 1001` |
 | `OutputWidth / OutputHeight` | `0 / 0` | Initial Game View size rounded down to even values; custom dimensions must both be positive and even |
 | `HardwareQuality` | `20` | NVENC CQ, range 0–51 |
@@ -287,7 +290,7 @@ H.264 is lossy. YUV 4:2:0 reduces color detail at fine lines and text edges. The
 
 Select `VideoBackend = RecordingVideoBackend.ImageSequence` to use the previous pipeline. JPEG/PNG, GPU readback queue and frame-write options remain available. Passing an explicit `IRecordingEncoderBackend` also selects that pipeline and hands a `RecordingEncodeRequest` to it. These settings do not change the default native path.
 
-The previous Windows implementation uses Media Foundation and macOS uses AVFoundation. Their sources remain available; new runtime validation focuses on Windows D3D11.
+The previous Windows implementation uses Media Foundation and macOS uses AVFoundation. Their sources remain available; platform runtime validation is recorded separately for Windows D3D11 and macOS Metal.
 
 ## Troubleshooting
 
@@ -296,3 +299,7 @@ The previous Windows implementation uses Media Foundation and macOS uses AVFound
 - **No images or many duplicates:** keep Game View rendering. Pausing, changing to a view that stops rendering or main-thread stalls affect capture.
 - **Saving fails:** inspect the result message and `manifest.json`; check free space, directory permissions and file locks.
 - **No sound:** verify output from the Unity process or its descendants, then inspect helper errors and audio statistics. Disabling Unity Audio does not necessarily disable Wwise output.
+
+## Standalone screenshot
+
+In Play mode, call `UnityScreenshot.CaptureAsync("/absolute/path/page.png")` on the Unity main thread. The task completes only after a new PNG has been written atomically. Capture occurs at end of frame and includes overlay UI at the current Game View resolution. Existing output paths are rejected. Keep the Game View visible while waiting; exiting Play mode cancels pending capture. This one-shot API does not start or modify an AV recording session.

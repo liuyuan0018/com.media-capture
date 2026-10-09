@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 - Unreleased
+
+- Add macOS Metal/IOSurface/VideoToolbox hardware recording with no CPU pixel readback or image intermediates.
+- Select the native backend automatically by platform while preserving existing explicit enum values.
+- Share native lifecycle and diagnostics with Windows; retain the Windows D3D11/NVENC path.
+- Preserve Unity background execution during recording, normalize Linear project colors on the GPU, and phase Mac frame sampling independently of DSP block quantization.
+- Update the recording CLI for backend/output-size selection and migrate package discovery plus zero-value validation fixes.
+
 ## Unreleased
 
 - Blit the current framebuffer directly into the fixed BGRA output texture when Game View dimensions match, without calling the screenshot API or allocating an RGBA intermediate. Allocate the intermediate only for scaling and release it when matching dimensions resume. Preserve frame-end capture, native texture ownership and complete-image scaling; report only allocated capture texture memory.

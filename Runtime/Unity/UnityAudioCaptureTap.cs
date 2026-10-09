@@ -7,6 +7,7 @@ namespace GameFramework.MediaCapture.Unity
     [DisallowMultipleComponent]
     internal sealed class UnityAudioCaptureTap : MonoBehaviour
     {
+        private readonly object callbackGate = new object();
         private PcmWaveWriter writer;
         private double sessionStartDsp;
         private int sampleRate;
@@ -34,10 +35,17 @@ namespace GameFramework.MediaCapture.Unity
 
         internal void End()
         {
-            accepting = false;
+            // Wait only for the bounded memory copy/enqueue, never disk or encoding.
+            // After this returns no audio callback can race writer finalization.
+            lock (callbackGate) accepting = false;
         }
 
         private void OnAudioFilterRead(float[] data, int channels)
+        {
+            lock (callbackGate) CaptureBlock(data, channels);
+        }
+
+        private void CaptureBlock(float[] data, int channels)
         {
             if (!accepting || writer == null || data == null || channels <= 0)
             {

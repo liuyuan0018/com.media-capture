@@ -1,8 +1,11 @@
 # Unity Media Capture
 
+**0.4.0 新增 macOS Metal + VideoToolbox 原生硬件录制。** 默认 `Automatic` 在 Mac 选择 Metal，在 Windows 选择 D3D11/NVENC；Mac 路径在游戏运行中直接编码，不做 CPU 像素回读或 JPEG/PNG 中转。声音采集范围为 Unity Audio 的 AudioListener 混音。下文的 D3D11/NVENC 说明仍适用于 Windows；Mac 构建与接口见 [macOS 实现说明](Native~/macOS/README.md)，实测范围见 [验证记录](Native~/macOS/VALIDATION.md)。
+
+
 [English](README.md) · **简体中文**
 
-Unity Media Capture 是**面向 Unity 应用内部的高性能音视频采集方案**，将 **Unity Game View 最终渲染结果和游戏进程音频**录制为 H.264 + AAC MP4 文件。默认后端采用 **Windows x64 / D3D11 / NVIDIA NVENC**：Unity 提供 GPU 纹理，原生插件通过 FFmpeg 硬件帧接口将纹理提交给 NVENC 编码。
+Unity Media Capture 是**面向 Unity 应用内部的高性能音视频采集方案**，将 **Unity Game View 最终渲染结果和游戏进程音频**录制为 H.264 + AAC MP4 文件。Windows 原生后端采用 **Windows x64 / D3D11 / NVIDIA NVENC**：Unity 提供 GPU 纹理，原生插件通过 FFmpeg 硬件帧接口将纹理提交给 NVENC 编码。
 
 版本 **0.3.0**。本包代码使用 [MIT](LICENSE)；FFmpeg 库使用 LGPL 2.1 或更新许可，见[第三方许可](ThirdPartyNotices.md)。
 
@@ -22,9 +25,9 @@ Windows 音频使用 WASAPI 进程回环采集，即按目标进程获取其播�
 | 编码硬件 | 支持 H.264 NVENC 的 NVIDIA GPU 与兼容驱动；实测 RTX 3070 |
 | 视频 | H.264，8-bit YUV 4:2:0，固定帧率，偶数尺寸 |
 | 音频 | WASAPI PCM16 / 48 kHz / 双声道，保存时编码为 AAC 192 kb/s |
-| 暂不支持 | Metal、D3D12、Vulkan、AMD AMF、Intel QSV、HDR 视频 |
+| Windows 暂不支持 | D3D12、Vulkan、AMD AMF、Intel QSV、HDR 视频 |
 
-不满足要求的配置将返回错误，默认后端不自动切换至 CPU 像素回读或软件编码，以保持性能行为可预期。图片序列后端保留为显式选项；原有 macOS AVFoundation 实现继续保留，Metal 原生录制不在当前实现范围内。
+不满足要求的配置将返回错误，默认后端不自动切换至 CPU 像素回读或软件编码，以保持性能行为可预期。图片序列后端保留为显式选项；原有 macOS 图片序列 AVFoundation 实现继续保留；新增 Metal 原生录制的说明与验证见上方链接。
 
 ## 安装与调用
 
@@ -245,7 +248,7 @@ FFmpeg 的库调用和命令行调用属于集成方式，不构成独立的画�
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `OutputPath` | 必填 | 绝对 `.mp4` 路径 |
-| `VideoBackend` | `NativeD3D11` | 可显式选择 `ImageSequence` |
+| `VideoBackend` | `Automatic` | Mac 自动选 Metal，Windows 自动选 D3D11；可显式选 `ImageSequence` |
 | `FrameRateNumerator / Denominator` | `24 / 1` | 例如 `30 / 1`、`30000 / 1001` |
 | `OutputWidth / OutputHeight` | `0 / 0` | 使用开始时 Game View 尺寸并取偶数；自定义时两个值都必须是正偶数 |
 | `HardwareQuality` | `20` | NVENC CQ，范围 0–51 |
@@ -287,7 +290,7 @@ H.264 是有损格式，YUV 4:2:0 会降低彩色细线和文字边缘的色彩�
 
 设置 `VideoBackend = RecordingVideoBackend.ImageSequence` 可使用原有图片序列流程，其 JPEG/PNG、GPU 回读队列和图片写盘参数仍有效。显式传入 `IRecordingEncoderBackend` 也会使用该流程，由自定义后端处理 `RecordingEncodeRequest`。这些参数不改变默认原生路径。
 
-Windows 旧流程使用 Media Foundation；macOS 旧流程使用 AVFoundation。两者的源码继续保留，当前版本的新验证集中于 Windows D3D11 原生路径。
+Windows 旧流程使用 Media Foundation；macOS 旧流程使用 AVFoundation。两者的源码继续保留，各平台原生路径的实测范围分别记录在 Windows 和 macOS 验证文档中。
 
 ## 故障诊断
 
