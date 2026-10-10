@@ -12,8 +12,8 @@ namespace GameFramework.MediaCapture.Unity
 {
     public sealed class WindowsMediaFoundationBackend : IRecordingEncoderBackend, IRecordingProcessAudioBackend
     {
-        private const string HelperResourcePath =
-            "GameFrameworkMediaCapture/WindowsMediaCaptureHelper";
+        private const string HelperAssetPath =
+            "Packages/com.media-capture/Editor/Unity/EditorAssets/GameFrameworkMediaCapture/WindowsMediaCaptureHelper.bytes";
         private const string HelperFileName = "WindowsMediaCaptureHelper.exe";
         private const int HelperStartupTimeoutMilliseconds = 10000;
 
@@ -39,7 +39,7 @@ namespace GameFramework.MediaCapture.Unity
                 return false;
             }
 
-            if (Resources.Load<TextAsset>(HelperResourcePath) == null)
+            if (UnityEditor.AssetDatabase.LoadAssetAtPath<TextAsset>(HelperAssetPath) == null)
             {
                 reason = "The packaged Windows media capture helper is missing. Build Native~/WindowsMediaCaptureHelper.vcxproj.";
                 return false;
@@ -353,7 +353,7 @@ namespace GameFramework.MediaCapture.Unity
 
         private static string ExtractHelper(string sessionDirectory)
         {
-            TextAsset helper = Resources.Load<TextAsset>(HelperResourcePath);
+            TextAsset helper = UnityEditor.AssetDatabase.LoadAssetAtPath<TextAsset>(HelperAssetPath);
             if (helper == null)
             {
                 throw new FileNotFoundException(

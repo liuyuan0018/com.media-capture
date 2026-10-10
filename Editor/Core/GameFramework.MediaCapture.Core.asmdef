@@ -1,4 +1,7 @@
 {
+  "includePlatforms": [
+    "Editor"
+  ],
   "name": "GameFramework.MediaCapture.Core",
   "rootNamespace": "GameFramework.MediaCapture",
   "references": [],

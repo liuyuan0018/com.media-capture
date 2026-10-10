@@ -21,7 +21,8 @@ namespace GameFramework.MediaCapture.Unity
                 return false;
             }
 
-            if (Resources.Load<TextAsset>("GameFrameworkMediaCapture/MacOsAvFoundationEncoder") == null)
+            if (UnityEditor.AssetDatabase.LoadAssetAtPath<TextAsset>(
+                    "Packages/com.media-capture/Editor/Unity/EditorAssets/GameFrameworkMediaCapture/MacOsAvFoundationEncoder.txt") == null)
             {
                 reason = "The packaged AVFoundation helper resource is missing.";
                 return false;
@@ -40,7 +41,8 @@ namespace GameFramework.MediaCapture.Unity
             CancellationToken cancellationToken)
         {
 #if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
-            TextAsset helper = Resources.Load<TextAsset>("GameFrameworkMediaCapture/MacOsAvFoundationEncoder");
+            TextAsset helper = UnityEditor.AssetDatabase.LoadAssetAtPath<TextAsset>(
+                "Packages/com.media-capture/Editor/Unity/EditorAssets/GameFrameworkMediaCapture/MacOsAvFoundationEncoder.txt");
             if (helper == null)
             {
                 return Task.FromResult(Failure("The packaged AVFoundation helper resource is missing."));

@@ -7,6 +7,7 @@
 - Share native lifecycle and diagnostics with Windows; retain the Windows D3D11/NVENC path.
 - Preserve Unity background execution during recording, normalize Linear project colors on the GPU, and phase Mac frame sampling independently of DSP block quantization.
 - Update the recording CLI for backend/output-size selection and migrate package discovery plus zero-value validation fixes.
+- Restructure the package as Editor-only: rename Runtime/ to Editor/ so scripts compile into editor-only assemblies and never ship in player builds, restrict native plugins to the Editor platform, and move helper assets from Resources (which ships unconditionally in every build) to Editor/Unity/EditorAssets loaded via AssetDatabase.
 
 ## Unreleased
 
