@@ -1,6 +1,6 @@
 # macOS Metal recording
 
-`RecordingVideoBackend.Automatic` selects this backend in macOS Editor/Player. It requires Metal and a VideoToolbox H.264 hardware encoder. A failed hardware initialization is reported; the backend does not silently switch to software or image sequences.
+`RecordingVideoBackend.Automatic` selects this backend in macOS Editor Play mode. The current package is Editor-only and excludes Player builds. It requires Metal and a VideoToolbox H.264 hardware encoder. A failed hardware initialization is reported; the backend does not silently switch to software or image sequences.
 
 ## Data path
 
@@ -14,7 +14,7 @@ macOS currently captures Unity Audio's listener mix. It does not provide Windows
 
 ## Timing and cancellation
 
-The first rendered frame establishes capture phase. A continuous clock anchored to the Unity DSP start drives frame selection, avoiding duplicate/skip oscillation from block-quantized `AudioSettings.dspTime`. Audio determines final duration. A DSP/continuous-clock disagreement over 100 ms fails the recording, such as when the audio device clock resets. Stop does not wait for the full encoder queue on the Unity thread.
+Unity DSP time is the master clock for frame selection, captured audio and final duration. `NativeFrameOrdinal()` uses a bounded sub-frame admission window to tolerate block-quantized DSP updates and advances to the current ordinal when source rendering falls behind. It does not maintain an independent wall clock. Audio determines final duration. Stop drains the encoder queue asynchronously rather than blocking the Unity thread.
 
 Capture slots and in-flight encodes are bounded by `GpuTexturePoolSize`. Exhausted slots drop source samples; source cadence gaps repeat the previous image in the CFR output. Gaps beyond `MaxEncodingLagMilliseconds` fault the session. Late render callbacks use request IDs and are ignored after cancellation. Buffer and RenderTexture release waits for pending GPU and encoder work.
 
@@ -29,7 +29,9 @@ export UNITY_PLUGIN_API="/Applications/Unity/Hub/Editor/<version>/Unity.app/Cont
 ./build.sh
 ```
 
-This produces an ad-hoc-signed universal arm64/x86_64 `Runtime/Plugins/macOS/MediaCaptureMetal.bundle` using Apple's system frameworks. No bundled FFmpeg build or Swift compiler is required on a machine running the recorder. Native binaries loaded by Unity should be rebuilt with the Editor closed, then the Editor reopened; script-only changes use the usual domain reload.
+The shipped plugin is `Editor/Plugins/macOS/MediaCaptureMetal.bundle`: an ad-hoc-signed universal arm64/x86_64 bundle targeting macOS 12+, using Apple's system frameworks. No bundled FFmpeg build or Swift compiler is required to use it.
+
+The current `build.sh` still writes its rebuilt bundle to the legacy `Runtime/Plugins/macOS` location. With Unity closed, deploy the rebuilt bundle contents into the existing `Editor/Plugins/macOS/MediaCaptureMetal.bundle`, retain its Editor-only `.meta` import settings, and remove the generated legacy copy before reopening Unity. Script-only changes use the usual domain reload.
 
 The intermediate executable and matching `.dSYM` stay in the ignored `build/` directory beside this script; debug symbols are not packaged inside the runtime bundle.
 

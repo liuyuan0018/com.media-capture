@@ -1,33 +1,44 @@
 # Unity Media Capture
 
-**0.4.0 新增 macOS Metal + VideoToolbox 原生硬件录制。** 默认 `Automatic` 在 Mac 选择 Metal，在 Windows 选择 D3D11/NVENC；Mac 路径在游戏运行中直接编码，不做 CPU 像素回读或 JPEG/PNG 中转。声音采集范围为 Unity Audio 的 AudioListener 混音。下文的 D3D11/NVENC 说明仍适用于 Windows；Mac 构建与接口见 [macOS 实现说明](Native~/macOS/README.md)，实测范围见 [验证记录](Native~/macOS/VALIDATION.md)。
-
-
 [English](README.md) · **简体中文**
 
-Unity Media Capture 是**面向 Unity 应用内部的高性能音视频采集方案**，将 **Unity Game View 最终渲染结果和游戏进程音频**录制为 H.264 + AAC MP4 文件。Windows 原生后端采用 **Windows x64 / D3D11 / NVIDIA NVENC**：Unity 提供 GPU 纹理，原生插件通过 FFmpeg 硬件帧接口将纹理提交给 NVENC 编码。
+Unity Media Capture 在 **Unity Editor 的 Play 模式**中，将 **Game View 最终画面和音频**录制为 H.264 + AAC MP4。当前版本 **0.4.0** 提供两套原生硬件录制后端：
 
-版本 **0.3.0**。本包代码使用 [MIT](LICENSE)；FFmpeg 库使用 LGPL 2.1 或更新许可，见[第三方许可](ThirdPartyNotices.md)。
+- **macOS：Metal + IOSurface + VideoToolbox**，音频来自 Unity Audio 的 `AudioListener` 混音。
+- **Windows：D3D11 + FFmpeg + NVIDIA NVENC**，音频来自 WASAPI 进程回环采集。
+
+默认 `RecordingVideoBackend.Automatic` 按平台选择后端。两条原生路径都在游戏运行期间编码视频，无需 CPU 视频像素回读或 JPEG/PNG 中间文件。包内另有单张 PNG 截图 API。
+
+**当前包仅供 Editor 使用。** 程序集、原生插件和辅助资源位于 `Editor/`，不会进入 Player 构建。下方引用的录制数据来自历史 Editor 验证；当前 Editor-only 包不提供独立 Player 录制。
+
+本包代码使用 [MIT](LICENSE)；Windows FFmpeg 库使用 LGPL 2.1 或更新许可，macOS 使用 Apple 系统框架。见[第三方许可](ThirdPartyNotices.md)。
 
 ## 采集范围
 
 录制器在一帧渲染结束后取得 Game View 的最终画面，包含已完成的相机合成、后处理和游戏内 UI。采集对象为该渲染结果，不会单独调用某一台 Camera 重新渲染。**桌面、Unity 工具栏、Scene View、Inspector 等编辑器界面不属于采集范围。**
 
-Windows 音频使用 WASAPI 进程回环采集，即按目标进程获取其播放的音频。目标为 Unity 进程及其子进程，可包含 Unity Audio、Wwise 等音频引擎的输出。其他无关应用和麦克风不属于采集范围；Unity 编辑器播放的音频预览属于同一进程，可能被录入。
+**macOS 音频**：通过启用的 `AudioListener` 获取 Unity Audio 混音，使用 Unity 输出采样率。不采集绕过 Unity Audio 的第三方音频引擎输出。
+
+**Windows 音频**：使用 WASAPI 按 Unity 进程及其子进程采集播放音频，可包含 Unity Audio、Wwise 等音频引擎。其他无关应用和麦克风不属于采集范围；Editor 音频预览属于同一进程，可能被录入。
 
 ## 支持范围
 
-| 项目 | 默认原生实现 |
-| --- | --- |
-| Unity | 2022.3；已在 2022.3.67f1 上验证 |
-| 系统 | Windows x64；进程音频要求 Windows build 20348 或更新版本，建议 Windows 11 |
-| 图形 API | D3D11 |
-| 编码硬件 | 支持 H.264 NVENC 的 NVIDIA GPU 与兼容驱动；实测 RTX 3070 |
-| 视频 | H.264，8-bit YUV 4:2:0，固定帧率，偶数尺寸 |
-| 音频 | WASAPI PCM16 / 48 kHz / 双声道，保存时编码为 AAC 192 kb/s |
-| Windows 暂不支持 | D3D12、Vulkan、AMD AMF、Intel QSV、HDR 视频 |
+包声明的最低 Unity 版本为 2022.3；各平台实际验证过的 Editor 版本如下：
 
-不满足要求的配置将返回错误，默认后端不自动切换至 CPU 像素回读或软件编码，以保持性能行为可预期。图片序列后端保留为显式选项；原有 macOS 图片序列 AVFoundation 实现继续保留；新增 Metal 原生录制的说明与验证见上方链接。
+| 项目 | macOS 原生后端 | Windows 原生后端 |
+| --- | --- | --- |
+| 已验证 Editor | Unity 6000.5.7f1 | Unity 2022.3.67f1 |
+| 系统与架构 | Bundle 最低目标 macOS 12，包含 arm64/x86_64；实测 Apple M2 / macOS 27.0 | Windows x64；进程音频要求 build 20348+，建议 Windows 11 |
+| 图形 API | Metal | D3D11 |
+| 硬件编码器 | 必须可用 VideoToolbox H.264 硬件编码器；实测 Apple M2，Intel 运行时未验证 | NVIDIA H.264 NVENC 与兼容驱动；实测 RTX 3070 |
+| 视频 | SDR H.264，固定帧率，偶数尺寸 | H.264，8-bit YUV 4:2:0，固定帧率，偶数尺寸 |
+| 音频来源 | Unity `AudioListener` 混音，使用 Unity 输出采样率 | WASAPI 进程音频，PCM16 / 48 kHz / 双声道 |
+| 最终文件 | H.264 + 双声道 AAC，音频 192 kb/s，MP4 | H.264 + 双声道 AAC，音频 192 kb/s，MP4 |
+| 平台限制 | 不提供绕过 Unity Audio 的第三方音频引擎进程回环采集；Intel 运行时未验证 | 暂不支持 D3D12、Vulkan、AMD AMF、Intel QSV 或 HDR 视频 |
+
+不满足条件时返回错误，原生硬件初始化失败不会静默改用软件编码或 CPU 像素回读。需要旧图片序列流程时，显式选择 `ImageSequence`。两条原生路径均不提供无损或 HDR 视频。
+
+详见 [Mac 实现说明](Native~/macOS/README.md)、[Mac 验证记录](Native~/macOS/VALIDATION.md)和 [Windows 验证记录](Native~/VALIDATION.md)。
 
 ## 安装与调用
 
@@ -37,16 +48,22 @@ Windows 音频使用 WASAPI 进程回环采集，即按目标进程获取其播�
 https://github.com/liuyuan0018/com.media-capture.git
 ```
 
-本地开发也可以在 `Packages/manifest.json` 中引用 package 目录。Windows 原生插件及它依赖的 FFmpeg DLL 必须一起部署到 `Runtime/Plugins/x86_64`。依赖来源、重建步骤和许可见 [原生构建说明](Native~/README.md)。
+本地开发可在 `Packages/manifest.json` 引用 package 目录；共享游戏工作区使用 `file:../../../../framework/com.media-capture`。
 
-在 Play 模式的 Unity 主线程调用：
+- macOS 导入 `Editor/Plugins/macOS/MediaCaptureMetal.bundle`，使用系统框架，不需要 FFmpeg DLL。
+- Windows 从 `Editor/Plugins/x86_64` 一起导入录制插件和四个 FFmpeg DLL。
+
+从 Editor 工具或仅限 Editor 的程序集调用 API。使用 `.asmdef` 的调用方须显式引用 `MediaCapture.Unity`，包未启用程序集自动引用。原生构建细节见 [Mac 指南](Native~/macOS/README.md)与 [Windows 指南](Native~/README.md)。
+
+在 Editor Play 模式的 Unity 主线程调用：
 
 ```csharp
 using GameFramework.MediaCapture.Unity;
 
 UnityAvRecorder recorder = UnityAvRecorder.StartRecording(new RecordingOptions
 {
-    OutputPath = @"D:\Recordings\game.mp4",
+    OutputPath = System.IO.Path.Combine(UnityEngine.Application.persistentDataPath, "game.mp4"),
+    VideoBackend = RecordingVideoBackend.Automatic,
     FrameRateNumerator = 30,
     HardwareQuality = 20,
     KeepIntermediateFiles = false
@@ -61,35 +78,46 @@ UnityEngine.Object.Destroy(recorder.gameObject);
 
 录制期间应保持 Game View 持续渲染，并在保存完成后退出 Play 模式。`Abort()` 终止录制，不执行正常的最终文件生成流程。停止任务支持 `CancellationToken`；失败或取消时保留会话目录用于诊断。调用者负责销毁其创建的录制器对象。
 
-本包提供录制 API 和 Player 命令行入口。录制控制界面由调用方实现，并通过 `RecordingOptions` 配置帧率、输出尺寸和编码质量。
-
-## 命令行录制
-
-已有 Player 启动入口接受绝对输出路径、秒数和整数帧率：
-
-```text
-Game.exe -force-d3d11 -gameFrameworkRecord "D:\Recordings\game.mp4" -gameFrameworkRecordSeconds 30 -gameFrameworkRecordFps 30
-```
-
-它使用默认原生后端并保留中间素材。必须运行有画面渲染的 Player；无图形或 `-nographics` 会话无法提供录制帧。启动入口将完成或失败写入日志，不会自动退出应用。当前版本尚未在构建出的 Player 中验证。
+本包提供用于 Editor 工具和自动化的录制、截图 API。调用方实现操作入口，并通过 `RecordingOptions` 配置帧率、输出尺寸和编码质量。旧版 Player 命令行示例不适用于当前 Editor-only 包。
 
 ## 方案选型
 
 性能设计针对 Unity 内部采集：默认原生后端通过 GPU 纹理传递视频帧并使用硬件视频编码，避免将完整视频帧像素回读到 CPU 内存。这一定位不表示本包比桌面、窗口或游戏录屏软件更快；当前尚未进行与这些软件的受控性能对比。Blit、GPU 纹理复制、同步和编码仍然存在开销。
 
-当前实现以游戏运行期间的实时录制为目标，优先减少 CPU 原始像素处理、图片文件读写和停止后的整段视频编码，同时限制采集队列的内存占用。输出采用固定帧率 H.264 + AAC MP4；平台范围限定为 Windows D3D11。
+当前实现以游戏运行期间的实时录制为目标，优先减少 CPU 原始像素处理、图片文件读写和停止后的整段视频编码，同时限制采集队列的内存占用。输出采用固定帧率 H.264 + AAC MP4；原生路径覆盖 macOS Metal 与 Windows D3D11。
 
 | 方案 | 数据传递与编码方式 | 收益与成本 | 当前用途 |
 | --- | --- | --- | --- |
 | 图片序列 + 系统编码器 | GPU 回读到 CPU，写入 JPEG/PNG，停止后使用 Media Foundation 或 AVFoundation 编码 | 可保留逐帧素材；增加 CPU 图片处理、磁盘读写和结束耗时，JPEG 额外引入有损压缩 | 保留为显式选择的兼容后端 |
 | FFmpeg 子进程 + 原始帧标准输入 | GPU 回读到 CPU，通过进程管道传入 `ffmpeg.exe` | 进程隔离且便于调用命令行参数；原始像素回读和跨进程传输仍然存在，使用硬件编码时还可能需要上传纹理 | 不作为默认实现 |
-| 原生 FFmpeg + D3D11 硬件帧 | 插件复用 Unity D3D11 设备，通过 FFmpeg 向 NVENC 提交 GPU 纹理 | 避免原始像素回读和图片中间文件；需要维护 GPU 同步、纹理引用、原生依赖和驱动兼容性 | 默认实现 |
+| 原生 Metal + VideoToolbox | 将 Unity Metal 纹理复制到 IOSurface 缓冲后提交给 VideoToolbox | 避免原始像素回读和图片中间文件；需要确认 GPU 完成状态并管理缓冲生命周期 | macOS 默认实现 |
+| 原生 FFmpeg + D3D11 硬件帧 | 插件复用 Unity D3D11 设备，通过 FFmpeg 向 NVENC 提交 GPU 纹理 | 避免原始像素回读和图片中间文件；需要维护 GPU 同步、纹理引用、原生依赖和驱动兼容性 | Windows 默认实现 |
 
-FFmpeg 提供编码器调用、时间戳、编码数据包和 MP4 封装能力，减少本包自行实现媒体处理逻辑的范围。NVENC 执行 H.264 硬件编码。**避免 GPU 回读依赖 D3D11 纹理与硬件编码器的兼容、同设备资源使用和正确的同步；仅将 FFmpeg 集成为原生 DLL 并不能自动满足这些条件。**
+在 Windows 上，FFmpeg 提供编码器调用、时间戳、编码数据包和 MP4 封装能力，减少本包自行实现媒体处理逻辑的范围。NVENC 执行 H.264 硬件编码。**避免 GPU 回读依赖 D3D11 纹理与硬件编码器的兼容、同设备资源使用和正确的同步；仅将 FFmpeg 集成为原生 DLL 并不能自动满足这些条件。**
 
-当前仅实现 NVENC，尚未实现 AMD AMF 和 Intel QSV 的硬件帧接入。FFmpeg 对其他编码器的支持不等于本包已完成相应设备管理和运行验证。默认不提供软件编码回退，调用者需显式选择其他后端。
+Windows 原生后端当前仅实现 NVENC，尚未实现 AMD AMF 和 Intel QSV 的硬件帧接入。FFmpeg 对其他编码器的支持不等于本包已完成相应设备管理和运行验证。默认不提供软件编码回退，调用者需显式选择其他后端。
 
-## FFmpeg 原生集成
+## macOS Metal 实现
+
+```text
+Game View 最终画面
+  → RGBA RenderTexture → GPU 缩放 / Linear 到显示色彩转换 → BGRA
+  → Unity 渲染线程事件 → Metal blit 到 IOSurface 支撑的 CVPixelBuffer
+  → GPU 完成回调 → VideoToolbox 硬件 H.264 → AVAssetWriter → video.mp4
+
+Unity AudioListener 混音 → PCM WAV
+停止后：等待视频完成 → 复制 H.264 + 将 PCM 编码为 AAC → 最终 MP4
+```
+
+原生插件将 Metal blit 提交到 Unity 的命令缓冲，确认 GPU 复制完成后才交给编码器。数量受限的缓冲租约覆盖 GPU 复制、编码和文件写入全过程，防止仍在使用的画面被覆盖；Unity 线程无需等待每一帧硬件编码完成。
+
+当前调度以 Unity DSP 时间同时驱动音频和视频，并通过有限的亚帧容差处理 DSP 时钟按音频块推进的情况。最终固定帧率视频长度由音频时长决定，缺少源帧时可能重复上一帧。停止后等待视频结束、编码音频并封装，不重复编码整段视频。
+
+`HardwareQuality` 将 0–51 映射为 VideoToolbox 的 1–0 质量参数，与 NVENC CQ 不是等画质对应关系。两条路径都仍有 GPU 复制、色彩转换和编码成本。
+
+对应源码：[Unity 纹理提交](Editor/Unity/NativeMetalCapture.cs)、[帧调度](Editor/Unity/UnityAvRecorder.Native.cs)和 [Metal / VideoToolbox 原生实现](Native~/macOS/MetalCapture.mm)。构建与生命周期细节见 [Mac 指南](Native~/macOS/README.md)。
+
+## Windows FFmpeg 原生集成
 
 C# 通过 P/Invoke 调用 `GameFrameworkMediaCapture.dll` 导出的 C 接口。该 DLL 加载于 Unity 进程内，动态链接 `avcodec`、`avformat`、`avutil` 和 `swresample`。**录制过程不启动 `ffmpeg.exe`，也不通过标准输入传输原始视频帧。** WASAPI 音频采集由独立的 Windows 辅助进程执行。
 
@@ -112,7 +140,7 @@ Unity 进程音频 → WASAPI 辅助进程 → audio.wav
 | FFmpeg 库 / NVIDIA NVENC | FFmpeg 管理硬件帧、时间戳和编码数据包；NVENC 将视频帧编码为 H.264；FFmpeg 执行 AAC 编码和 MP4 封装 |
 | Windows 音频辅助进程 | 按 Unity 进程范围采集音频，记录 QPC 时间信息并写入 WAV 及音频统计 |
 
-## 核心设计
+## Windows 后端设计
 
 ### Unity GPU 纹理提交至 FFmpeg 的调用过程
 
@@ -209,7 +237,7 @@ int result = avcodec_send_frame(codec, frame);
 
 插件启用 D3D11 多线程保护，并在最后一个会话释放相关设备引用后恢复原设置；Unity 始终拥有图形设备。默认视频路径不调用 `ReadPixels`、`AsyncGPUReadback` 或 `av_hwframe_transfer_data()`，也不执行 JPEG/PNG 编码。该路径仍包含 GPU 复制、格式转换和同步，不属于完全无复制的实现。
 
-对应源码：[帧末调度](Runtime/Unity/UnityAvRecorder.Native.cs)中的 `CaptureNativeFrames()`、[Unity 纹理与原生调用](Runtime/Unity/NativeD3D11Capture.cs)中的构造函数、`Capture()` 和 `IssueEvent()`，以及[原生 D3D11 与 FFmpeg 实现](Native~/FfmpegCapture.cpp)中的 `Session`、`OpenEncoder()`、`Submit()`、`PollGpu()`、`Encode()` 和 `FrameLease`。
+对应源码：[帧末调度](Editor/Unity/UnityAvRecorder.Native.cs)中的 `CaptureNativeFrames()`、[Unity 纹理与原生调用](Editor/Unity/NativeD3D11Capture.cs)中的构造函数、`Capture()` 和 `IssueEvent()`，以及[原生 D3D11 与 FFmpeg 实现](Native~/FfmpegCapture.cpp)中的 `Session`、`OpenEncoder()`、`Submit()`、`PollGpu()`、`Encode()` 和 `FrameLease`。
 
 ### 固定输出尺寸与编辑器上下文
 
@@ -251,7 +279,7 @@ FFmpeg 的库调用和命令行调用属于集成方式，不构成独立的画�
 | `VideoBackend` | `Automatic` | Mac 自动选 Metal，Windows 自动选 D3D11；可显式选 `ImageSequence` |
 | `FrameRateNumerator / Denominator` | `24 / 1` | 例如 `30 / 1`、`30000 / 1001` |
 | `OutputWidth / OutputHeight` | `0 / 0` | 使用开始时 Game View 尺寸并取偶数；自定义时两个值都必须是正偶数 |
-| `HardwareQuality` | `20` | NVENC CQ，范围 0–51 |
+| `HardwareQuality` | `20` | 范围 0–51；Windows 使用 NVENC CQ，macOS 映射为 VideoToolbox 的 1–0 质量参数。值越低请求画质越高，不能跨编码器等同 |
 | `GpuTexturePoolSize` | `8` | 原生视频纹理数量，范围 4–32 |
 | `MaxEncodingLagMilliseconds` | `2000` | 编码落后时钟的失败阈值 |
 | `EncoderTimeoutSeconds` | `300` | 停止及保存等待上限 |
@@ -264,9 +292,17 @@ FFmpeg 的库调用和命令行调用属于集成方式，不构成独立的画�
 
 音频的精确丢失帧数无法从 WASAPI 完整推导时，`DroppedAudioFrames` 为 `-1`，`DroppedAudioFramesKnown` 为 `false`。音频统计另行记录不连续事件、时间戳错误和补静音帧数；补静音也可能由音频空闲或结束时长补齐产生，不等同于音频丢失量。
 
-原生会话将这些数据写入输出目录下 `.media-capture-*` 中的 `manifest.json`；音频辅助进程写入 `audio.wav.stats.json`。成功且不保留中间素材时，仍保留诊断 JSON。
+原生会话将这些数据写入输出目录下 `.media-capture-*` 中的 `manifest.json`；Windows 音频辅助进程另写入 `audio.wav.stats.json`。成功且不保留中间素材时，仍保留诊断 JSON。
 
 ## 验证结果与适用边界
+
+### macOS Metal
+
+[2026-09-24 验证记录](Native~/macOS/VALIDATION.md)使用 Apple M2 / macOS 27.0 / Unity 6000.5.7f1 / Metal。在 Editor 中录制 1080×1920、30 fps 的 H.264/AAC 视频，输出 20.1 秒，停止至完成耗时 0.759 秒；编码池丢帧和音频丢帧均为 0，含 11 个 CFR 重复帧。20 组诊断音画脉冲的最大起点偏差为一个 30 fps 帧，即 33.33 毫秒。
+
+这些数据属于所链接的历史样例，不是当前检出的新一轮实测，也不是与 Windows 的性能对比。运行时只验证了 arm64；包含 x86_64 的通用二进制不等于 Intel 运行时已验证。当前包不进入 Player 构建。
+
+### Windows D3D11 / NVENC
 
 在直接 BGRA 优化之前，一次同场景、每段 20 秒的对比中，原生录制约 173.56 FPS，旧图片序列流程约 162.42 FPS；停止保存耗时分别为 1.10 秒和 8.90 秒。这是简单场景实测，两种编码器的参数不同，不是同画质压缩效率评测，也不代表此次优化后的性能数据。此次优化的实际耗时收益尚未测量。CPU 数据、声画时间与限制见[验证报告](Native~/VALIDATION.md)。
 
@@ -275,7 +311,7 @@ FFmpeg 的库调用和命令行调用属于集成方式，不构成独立的画�
 | 配置 | 录制使用的 GPU 纹理 | 像素存储估算 |
 | --- | --- | ---: |
 | 直接 Blit 优化前的原生后端 | 1 张 RGBA 中间纹理 + 1 张 BGRA 输出纹理 + 8 张原生纹理池纹理 | 79.1 MiB |
-| 当前原生后端，采集与输出尺寸相同 | 1 张 BGRA 输出纹理 + 8 张原生纹理池纹理 | 71.2 MiB |
+| Windows 原生后端，采集与输出尺寸相同 | 1 张 BGRA 输出纹理 + 8 张原生纹理池纹理 | 71.2 MiB |
 | 对比中的旧图片序列后端 | 3 张用于异步 GPU 回读的采集纹理 | 23.7 MiB |
 
 原生插件按 `GpuTexturePoolSize` 预分配纹理，默认数量为 8。插件将采集画面复制到空闲池纹理，使 Unity 写入下一帧时，前面帧的 GPU 复制和编码可以继续执行；只有全部帧引用释放后，池纹理才可再次使用。分配 8 张纹理不表示始终有 8 帧等待编码。旧流程将像素回读到 CPU 内存后继续进行图片处理，在这次对比中还预分配了 23.7 MiB 的 CPU 像素缓冲。
@@ -294,8 +330,15 @@ Windows 旧流程使用 Media Foundation；macOS 旧流程使用 AVFoundation。
 
 ## 故障诊断
 
+- **Metal Bundle 加载失败**：检查 `Editor/Plugins/macOS/MediaCaptureMetal.bundle`、macOS Editor 导入设置及原生加载或签名错误；替换已加载的 Bundle 后重启 Unity。
+- **VideoToolbox 初始化失败**：确认 Unity 使用 Metal，且 H.264 硬件编码器可用；不会自动改用软件编码。
 - **原生 DLL 加载失败**：检查 Windows x64 导入设置、四个 FFmpeg DLL 和 Visual C++ 运行库；替换已加载的 DLL 后重启 Unity。
 - **NVENC 初始化失败**：检查 D3D11、GPU 型号、驱动和可用硬件编码会话。不会自动改用软件编码。
 - **无视频帧或重复帧过多**：检查 Game View 是否持续渲染；暂停、切换至停止渲染的视图或主线程阻塞均会影响采集。
 - **停止失败**：查看结果消息与会话 `manifest.json`；确认磁盘空间、输出目录权限以及文件是否被其他程序占用。
-- **无音频输出**：确认音频由目标 Unity 进程或其子进程播放，并检查辅助进程退出信息及音频统计。Unity Audio 与 Wwise 的启用状态需分别检查。
+- **macOS 无音频**：检查 Unity Audio 与启用的 `AudioListener`；绕过该混音的第三方音频引擎不会被采集。
+- **Windows 无音频**：确认音频由 Unity 进程或其子进程播放，再检查辅助进程退出信息及音频统计；Unity Audio 与 Wwise 的启用状态需分别检查。
+
+## 单张截图
+
+在 Editor Play 模式的 Unity 主线程调用 `UnityScreenshot.CaptureAsync("/absolute/path/page.png")`。API 在帧末采集当前 Game View 分辨率的完整画面，包含 Overlay UI；任务在新的 PNG 文件原子写入后完成。输出必须是尚不存在的绝对 `.png` 路径。等待时保持 Game View 可见，退出 Play 模式会取消待完成的截图。单张截图不会启动或修改音视频录制会话。
