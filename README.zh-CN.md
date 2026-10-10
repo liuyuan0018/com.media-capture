@@ -9,7 +9,7 @@ Unity Media Capture 在 **Unity Editor 的 Play 模式**中，将 **Game View �
 
 默认 `RecordingVideoBackend.Automatic` 按平台选择后端。两条原生路径都在游戏运行期间编码视频，无需 CPU 视频像素回读或 JPEG/PNG 中间文件。包内另有单张 PNG 截图 API。
 
-**当前包仅供 Editor 使用。** 程序集、原生插件和辅助资源位于 `Editor/`，不会进入 Player 构建。下方引用的录制数据来自历史 Editor 验证；当前 Editor-only 包不提供独立 Player 录制。
+**当前包仅供 Editor 使用。** 原生插件与辅助资源不会进入 Player 构建：插件仅对 Editor 平台启用，辅助资源不使用会随构建打包的特殊目录，托管程序集未启用自动引用。下方引用的录制数据来自历史 Editor 验证；当前 Editor-only 包不提供独立 Player 录制。
 
 本包代码使用 [MIT](LICENSE)；Windows FFmpeg 库使用 LGPL 2.1 或更新许可，macOS 使用 Apple 系统框架。见[第三方许可](ThirdPartyNotices.md)。
 
@@ -50,8 +50,8 @@ https://github.com/liuyuan0018/com.media-capture.git
 
 本地开发可在 `Packages/manifest.json` 引用 package 目录；共享游戏工作区使用 `file:../../../../framework/com.media-capture`。
 
-- macOS 导入 `Editor/Plugins/macOS/MediaCaptureMetal.bundle`，使用系统框架，不需要 FFmpeg DLL。
-- Windows 从 `Editor/Plugins/x86_64` 一起导入录制插件和四个 FFmpeg DLL。
+- macOS 导入 `Runtime/Plugins/macOS/MediaCaptureMetal.bundle`，使用系统框架，不需要 FFmpeg DLL。
+- Windows 从 `Runtime/Plugins/x86_64` 一起导入录制插件和四个 FFmpeg DLL。
 
 从 Editor 工具或仅限 Editor 的程序集调用 API。使用 `.asmdef` 的调用方须显式引用 `MediaCapture.Unity`，包未启用程序集自动引用。原生构建细节见 [Mac 指南](Native~/macOS/README.md)与 [Windows 指南](Native~/README.md)。
 
@@ -115,7 +115,7 @@ Unity AudioListener 混音 → PCM WAV
 
 `HardwareQuality` 将 0–51 映射为 VideoToolbox 的 1–0 质量参数，与 NVENC CQ 不是等画质对应关系。两条路径都仍有 GPU 复制、色彩转换和编码成本。
 
-对应源码：[Unity 纹理提交](Editor/Unity/NativeMetalCapture.cs)、[帧调度](Editor/Unity/UnityAvRecorder.Native.cs)和 [Metal / VideoToolbox 原生实现](Native~/macOS/MetalCapture.mm)。构建与生命周期细节见 [Mac 指南](Native~/macOS/README.md)。
+对应源码：[Unity 纹理提交](Runtime/Unity/NativeMetalCapture.cs)、[帧调度](Runtime/Unity/UnityAvRecorder.Native.cs)和 [Metal / VideoToolbox 原生实现](Native~/macOS/MetalCapture.mm)。构建与生命周期细节见 [Mac 指南](Native~/macOS/README.md)。
 
 ## Windows FFmpeg 原生集成
 
@@ -237,7 +237,7 @@ int result = avcodec_send_frame(codec, frame);
 
 插件启用 D3D11 多线程保护，并在最后一个会话释放相关设备引用后恢复原设置；Unity 始终拥有图形设备。默认视频路径不调用 `ReadPixels`、`AsyncGPUReadback` 或 `av_hwframe_transfer_data()`，也不执行 JPEG/PNG 编码。该路径仍包含 GPU 复制、格式转换和同步，不属于完全无复制的实现。
 
-对应源码：[帧末调度](Editor/Unity/UnityAvRecorder.Native.cs)中的 `CaptureNativeFrames()`、[Unity 纹理与原生调用](Editor/Unity/NativeD3D11Capture.cs)中的构造函数、`Capture()` 和 `IssueEvent()`，以及[原生 D3D11 与 FFmpeg 实现](Native~/FfmpegCapture.cpp)中的 `Session`、`OpenEncoder()`、`Submit()`、`PollGpu()`、`Encode()` 和 `FrameLease`。
+对应源码：[帧末调度](Runtime/Unity/UnityAvRecorder.Native.cs)中的 `CaptureNativeFrames()`、[Unity 纹理与原生调用](Runtime/Unity/NativeD3D11Capture.cs)中的构造函数、`Capture()` 和 `IssueEvent()`，以及[原生 D3D11 与 FFmpeg 实现](Native~/FfmpegCapture.cpp)中的 `Session`、`OpenEncoder()`、`Submit()`、`PollGpu()`、`Encode()` 和 `FrameLease`。
 
 ### 固定输出尺寸与编辑器上下文
 
@@ -330,7 +330,7 @@ Windows 旧流程使用 Media Foundation；macOS 旧流程使用 AVFoundation。
 
 ## 故障诊断
 
-- **Metal Bundle 加载失败**：检查 `Editor/Plugins/macOS/MediaCaptureMetal.bundle`、macOS Editor 导入设置及原生加载或签名错误；替换已加载的 Bundle 后重启 Unity。
+- **Metal Bundle 加载失败**：检查 `Runtime/Plugins/macOS/MediaCaptureMetal.bundle`、macOS Editor 导入设置及原生加载或签名错误；替换已加载的 Bundle 后重启 Unity。
 - **VideoToolbox 初始化失败**：确认 Unity 使用 Metal，且 H.264 硬件编码器可用；不会自动改用软件编码。
 - **原生 DLL 加载失败**：检查 Windows x64 导入设置、四个 FFmpeg DLL 和 Visual C++ 运行库；替换已加载的 DLL 后重启 Unity。
 - **NVENC 初始化失败**：检查 D3D11、GPU 型号、驱动和可用硬件编码会话。不会自动改用软件编码。

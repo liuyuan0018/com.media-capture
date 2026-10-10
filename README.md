@@ -9,7 +9,7 @@ Unity Media Capture records the **final Unity Game View and audio to H.264 + AAC
 
 `RecordingVideoBackend.Automatic` selects the backend by platform. Both encode video while the game runs without CPU video-pixel readback or JPEG/PNG intermediates. The package also provides a one-shot PNG screenshot API.
 
-**The current package is Editor-only.** Its assemblies, native plugins and helper assets live under `Editor/` and are excluded from Player builds. The backend recordings linked below are historical Editor validation; the current Editor-only package does not provide standalone Player capture.
+**The current package is Editor-only.** Its native plugins and helper assets are excluded from Player builds: plugins are enabled only for the Editor platform, helper assets avoid build-shipped special folders, and the managed assemblies disable automatic references. The backend recordings linked below are historical Editor validation; the current Editor-only package does not provide standalone Player capture.
 
 Package code: [MIT](LICENSE). The Windows FFmpeg libraries are LGPL 2.1 or later; macOS uses Apple's system frameworks. See [third-party notices](ThirdPartyNotices.md).
 
@@ -50,8 +50,8 @@ https://github.com/liuyuan0018/com.media-capture.git
 
 For local development, reference the package directory in `Packages/manifest.json`. The shared game workspace uses `file:../../../../framework/com.media-capture`.
 
-- macOS imports `Editor/Plugins/macOS/MediaCaptureMetal.bundle`; it uses system frameworks and does not require FFmpeg DLLs.
-- Windows imports the recording plugin and its four FFmpeg DLLs together from `Editor/Plugins/x86_64`.
+- macOS imports `Runtime/Plugins/macOS/MediaCaptureMetal.bundle`; it uses system frameworks and does not require FFmpeg DLLs.
+- Windows imports the recording plugin and its four FFmpeg DLLs together from `Runtime/Plugins/x86_64`.
 
 Call the API from Editor tooling or an Editor-only assembly. Assemblies using `.asmdef` files must explicitly reference `MediaCapture.Unity`; the package disables automatic assembly references. Native build details are in the [Mac guide](Native~/macOS/README.md) and [Windows guide](Native~/README.md).
 
@@ -115,7 +115,7 @@ The current frame scheduler uses Unity DSP time for audio and video. It admits t
 
 `HardwareQuality` maps 0–51 to VideoToolbox quality 1–0. This is not a quality-equivalence mapping to NVENC CQ. Both paths retain GPU copy, color-conversion and encoding costs.
 
-Sources: [Unity texture submission](Editor/Unity/NativeMetalCapture.cs), [frame scheduling](Editor/Unity/UnityAvRecorder.Native.cs), and [native Metal / VideoToolbox implementation](Native~/macOS/MetalCapture.mm). Build and lifecycle details are in the [Mac guide](Native~/macOS/README.md).
+Sources: [Unity texture submission](Runtime/Unity/NativeMetalCapture.cs), [frame scheduling](Runtime/Unity/UnityAvRecorder.Native.cs), and [native Metal / VideoToolbox implementation](Native~/macOS/MetalCapture.mm). Build and lifecycle details are in the [Mac guide](Native~/macOS/README.md).
 
 ## Windows native FFmpeg integration
 
@@ -237,7 +237,7 @@ Under the `AV_PIX_FMT_D3D11` convention, `data[0]` holds an `ID3D11Texture2D*`, 
 
 The plugin enables D3D11 multithread protection and restores the previous setting after the final session releases the associated device references. Unity retains ownership of its graphics device. The default video path calls neither `ReadPixels`, `AsyncGPUReadback` nor `av_hwframe_transfer_data()`, and performs no JPEG/PNG encoding. GPU copies, format conversion and synchronization remain; this is not a completely copy-free implementation.
 
-Source references: `CaptureNativeFrames()` in [frame-end scheduling](Editor/Unity/UnityAvRecorder.Native.cs); the constructor, `Capture()` and `IssueEvent()` in [Unity texture and native calls](Editor/Unity/NativeD3D11Capture.cs); and `Session`, `OpenEncoder()`, `Submit()`, `PollGpu()`, `Encode()` and `FrameLease` in the [native D3D11 and FFmpeg implementation](Native~/FfmpegCapture.cpp).
+Source references: `CaptureNativeFrames()` in [frame-end scheduling](Runtime/Unity/UnityAvRecorder.Native.cs); the constructor, `Capture()` and `IssueEvent()` in [Unity texture and native calls](Runtime/Unity/NativeD3D11Capture.cs); and `Session`, `OpenEncoder()`, `Submit()`, `PollGpu()`, `Encode()` and `FrameLease` in the [native D3D11 and FFmpeg implementation](Native~/FfmpegCapture.cpp).
 
 ### Fixed output dimensions and Editor context
 
@@ -330,7 +330,7 @@ The previous Windows implementation uses Media Foundation and macOS uses AVFound
 
 ## Troubleshooting
 
-- **Metal bundle unavailable:** check `Editor/Plugins/macOS/MediaCaptureMetal.bundle`, macOS Editor import settings and native loading/signature errors. Restart Unity after replacing a loaded bundle.
+- **Metal bundle unavailable:** check `Runtime/Plugins/macOS/MediaCaptureMetal.bundle`, macOS Editor import settings and native loading/signature errors. Restart Unity after replacing a loaded bundle.
 - **VideoToolbox initialization fails:** confirm Unity is using Metal and a hardware H.264 encoder is available. There is no automatic software fallback.
 - **Native DLL unavailable:** check Windows x64 import settings, all four FFmpeg DLLs and the Visual C++ runtime. Restart Unity after replacing a loaded native DLL.
 - **NVENC initialization fails:** check D3D11, GPU, driver and available hardware encoder sessions. There is no automatic software fallback.
