@@ -60,8 +60,13 @@ namespace GameFramework.MediaCapture.Unity
                 throw new PlatformNotSupportedException("Native recording requires macOS Metal.");
             try
             {
-                Shader colorShader = UnityEditor.AssetDatabase.LoadAssetAtPath<Shader>(
-                    "Packages/com.media-capture/Editor/Unity/EditorAssets/GameFrameworkMediaCapture/MetalCaptureColor.shader");
+                Shader colorShader =
+#if UNITY_EDITOR
+                    UnityEditor.AssetDatabase.LoadAssetAtPath<Shader>(
+                        "Packages/com.media-capture/Runtime/Unity/EditorAssets/GameFrameworkMediaCapture/MetalCaptureColor.shader");
+#else
+                    null; // Editor-only deployment: helper assets are not shipped in player builds.
+#endif
                 if (colorShader == null) throw new InvalidOperationException("Metal capture color shader is missing.");
                 m_ColorMaterial = new Material(colorShader) { hideFlags = HideFlags.HideAndDontSave };
                 m_ColorMaterial.SetFloat("_EncodeSRGB", QualitySettings.activeColorSpace == ColorSpace.Linear ? 1f : 0f);
